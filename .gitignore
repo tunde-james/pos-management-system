@@ -1,0 +1,33 @@
+# AI Agent Configuration and Context Files
+AGENTS.md
+CONTEXT.md
+MISSION.md
+docs/
+docs/agents/
+docs/references/
+.continue
+HELP.md
+.scratch
+.issues/
+*.env
+.env.local
+.env.*.local
+docker-compose.override.yml
+
+# Learning records and generated lessons
+
+# Java / Maven
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Node / frontend (when scaffolded)
+node_modules/
+dist/
