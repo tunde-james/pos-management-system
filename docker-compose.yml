@@ -1,0 +1,56 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: pos-backend-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${POS_DB_ROOT_PASSWORD}
+      MYSQL_USER: ${POS_DB_USER}
+      MYSQL_DATABASE: ${POS_DB_NAME}
+      MYSQL_PASSWORD: ${POS_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - pos-mysql-data:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  pos-backend:
+    build:
+      context: ./pos-backend
+      dockerfile: Dockerfile
+    image: pos-backend:latest
+    container_name: pos-backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${POS_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${POS_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POS_DB_PASSWORD}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      ERRORS_BASE_URL: ${ERRORS_BASE_URL}
+    ports:
+      - '4000:4000'
+    networks:
+      - internal
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'curl -fsS http://localhost:4000/actuator/health || exit']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pos-mysql-data:
