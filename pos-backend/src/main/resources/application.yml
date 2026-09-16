@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: pos-backend
+  config:
+    import: optional:file:../.env[.properties]
+  output:
+    ansi:
+      enabled: ALWAYS
+  datasource:
+    url: ${POS_DB_URL:jdbc:mysql://localhost:3306/posbackend}
+    username: ${POS_DB_USER:pos}
+    password: ${POS_DB_PASSWORD:posbackend!}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+server:
+  port: 4000
+
+logging:
+  level:
+    root: INFO
+
+app:
+  errors:
+    base-url: ${ERRORS_BASE_URL:https://pos.devtunde.com/errors}
+  security:
+    jwt:
+      secret: ${AUTH_JWT_SECRET:}
+      expiration-minutes: 15
+      issuer: pos-backend
+    argon2:
+      salt-length: 16
+      hash-length: 32
+      parallelism: 1
+      memory-kb: 32768
+      iterations: 3
