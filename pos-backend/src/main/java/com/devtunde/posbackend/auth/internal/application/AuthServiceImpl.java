@@ -11,6 +11,7 @@ import com.devtunde.posbackend.auth.api.AuthService;
 import com.devtunde.posbackend.auth.api.dto.AuthResponse;
 import com.devtunde.posbackend.auth.api.dto.LoginRequest;
 import com.devtunde.posbackend.auth.api.dto.SignupRequest;
+import com.devtunde.posbackend.auth.api.exception.AccountLockedException;
 import com.devtunde.posbackend.auth.api.exception.EmailAlreadyRegisteredException;
 import com.devtunde.posbackend.auth.api.exception.InvalidCredentialsException;
 import com.devtunde.posbackend.auth.internal.domain.User;
@@ -26,18 +27,21 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final UserMapper userMapper;
     private final PhoneNormalizer phoneNormalizer;
+    private final LoginAttemptService loginAttemptService;
 
     public AuthServiceImpl(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             JwtService jwtService,
             UserMapper userMapper,
-            PhoneNormalizer phoneNormalizer) {
+            PhoneNormalizer phoneNormalizer,
+            LoginAttemptService loginAttemptService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.userMapper = userMapper;
         this.phoneNormalizer = phoneNormalizer;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @Override
@@ -55,6 +59,8 @@ public class AuthServiceImpl implements AuthService {
                 passwordEncoder.encode(request.password()));
         user = userRepository.save(user);
 
+        loginAttemptService.clearAttempts(request.email());
+
         String accessToken = issueAccessToken(user);
 
         return new AuthResponse(accessToken, "Signup successful", userMapper.toView(user));
@@ -64,11 +70,20 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public AuthResponse login(LoginRequest request) {
 
-        User user = userRepository.findByEmail(request.email()).orElseThrow(InvalidCredentialsException::new);
+        if (loginAttemptService.isLocked(request.email())) {
+            throw new AccountLockedException();
+        }
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        User user = userRepository.findByEmail(request.email()).orElse(null);
+
+        if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+
+            loginAttemptService.recordFailure(request.email());
+
             throw new InvalidCredentialsException();
         }
+
+        loginAttemptService.clearAttempts(request.email());
 
         user.recordLogin();
 

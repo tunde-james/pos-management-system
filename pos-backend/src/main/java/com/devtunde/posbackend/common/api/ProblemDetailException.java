@@ -2,6 +2,8 @@ package com.devtunde.posbackend.common.api;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 
@@ -22,11 +24,12 @@ public abstract class ProblemDetailException extends RuntimeException {
 
     public abstract String title();
 
+    public Map<String, String> headers() {
+        return Map.of();
+    }
+
     public ProblemDetail toProblemDetail(String errorBaseUrl) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-            status,
-            getMessage()
-        );
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(status, getMessage());
         problemDetail.setType(URI.create(errorBaseUrl + "/" + errorCode()));
         problemDetail.setTitle(title());
         problemDetail.setProperty("timestamp", Instant.now());

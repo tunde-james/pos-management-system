@@ -39,3 +39,9 @@ app:
       parallelism: 1
       memory-kb: 32768
       iterations: 3
+    lockout:
+      max-attempts: 5
+      lock-duration: 15m
+    rate-limit:
+      limit: 20
+      window: 1m

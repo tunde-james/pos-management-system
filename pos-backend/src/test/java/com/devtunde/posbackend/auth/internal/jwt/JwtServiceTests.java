@@ -24,7 +24,9 @@ class JwtServiceTests {
     private JwtService newService(String secret, String issuer) {
         AuthProperties properties = new AuthProperties(
                 new AuthProperties.Jwt(secret, EXPIRATION_MINUTES, issuer),
-                new AuthProperties.Argon2(16, 32, 1, 16384, 2));
+                new AuthProperties.Argon2(16, 32, 1, 16384, 2),
+                null,
+                null);
         return new JwtService(properties);
     }
 

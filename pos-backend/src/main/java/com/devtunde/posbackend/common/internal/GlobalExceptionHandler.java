@@ -2,6 +2,7 @@ package com.devtunde.posbackend.common.internal;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -28,7 +29,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ProblemDetail> handleProblemDetail(ProblemDetailException ex) {
 
         ProblemDetail problemDetail = ex.toProblemDetail(errorProperties.baseUrl());
-        return ResponseEntity.status(ex.status()).body(problemDetail);
+
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.status());
+        
+        for (Map.Entry<String, String> header : ex.headers().entrySet()) {
+            response.header(header.getKey(), header.getValue());
+        }
+        return response.body(problemDetail);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
