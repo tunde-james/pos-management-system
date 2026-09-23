@@ -103,4 +103,22 @@ class InMemoryLoginAttemptServiceTests {
 
         assertThat(service.isLocked("user@devtunde.com")).isTrue();
     }
+
+    @Test
+    @DisplayName("purgeStale drops entries idle longer than the lock duration — counters restart cleanly")
+    void purgeStaleRemovesOldEntries() {
+        InMemoryLoginAttemptService service = newService();
+
+        service.recordFailure("stale.user@devtunde.com");
+        service.recordFailure("stale.user@devtunde.com");
+
+        advance(LOCK_DURATION.plusSeconds(1));
+
+        service.purgeStale();
+
+        // the two ancient failures are gone — one new failure must not lock the account
+        service.recordFailure("stale.user@devtunde.com");
+
+        assertThat(service.isLocked("stale.user@devtunde.com")).isFalse();
+    }
 }

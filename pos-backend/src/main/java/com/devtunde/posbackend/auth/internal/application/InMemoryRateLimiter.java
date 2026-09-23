@@ -3,6 +3,7 @@ package com.devtunde.posbackend.auth.internal.application;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -44,5 +45,18 @@ public class InMemoryRateLimiter implements RateLimiter {
 
         window.count++;
         return true;
+    }
+
+    @Override
+    public synchronized void purgeStaleWindows() {
+        long currentWindowId = now.get().toEpochMilli() / windowMillis;
+
+        Iterator<Map.Entry<String, Window>> it = windows.entrySet().iterator();
+        while (it.hasNext()) {
+            Window window = it.next().getValue();
+            if (window.id != currentWindowId) {
+                it.remove();
+            }
+        }
     }
 }

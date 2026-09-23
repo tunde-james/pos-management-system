@@ -69,8 +69,10 @@ public class RefreshTokenService {
             throw new InvalidCredentialsException();
         }
 
-        stored.revoke();
-        refreshTokenRepository.save(stored);
+        if (refreshTokenRepository.revokeIfActive(stored.getId(), LocalDateTime.now()) == 0) {
+            refreshTokenRepository.revokeFamily(stored.getFamilyId(), LocalDateTime.now());
+            throw new InvalidCredentialsException();
+        }
 
         String newRefreshToken = UUID.randomUUID().toString();
         refreshTokenRepository.save(

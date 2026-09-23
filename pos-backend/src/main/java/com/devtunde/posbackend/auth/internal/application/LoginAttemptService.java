@@ -7,4 +7,6 @@ public interface LoginAttemptService {
     void recordFailure(String email);
 
     void clearAttempts(String email);
+
+    void purgeStale();
 }

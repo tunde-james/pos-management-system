@@ -7,4 +7,6 @@ public interface TokenRevocationService {
     void revoke(String jti, Instant expiresAt);
 
     boolean isRevoked(String jti);
+
+    void purgeExpired();
 }

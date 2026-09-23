@@ -11,7 +11,7 @@ public class TooManyRequestsException extends ProblemDetailException {
     private final long retryAfterSeconds;
 
     public TooManyRequestsException(long retryAfterSeconds) {
-        super(HttpStatus.TOO_MANY_REQUESTS, "Too many login requests. Slow down and try again later.");
+        super(HttpStatus.TOO_MANY_REQUESTS, "Too many requests. Slow down and try again later.");
         this.retryAfterSeconds = retryAfterSeconds;
     }
 

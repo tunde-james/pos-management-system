@@ -3,6 +3,7 @@ package com.devtunde.posbackend.auth.internal.application;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -12,6 +13,7 @@ public class InMemoryLoginAttemptService implements LoginAttemptService {
     private static final class Attempt {
         private int count;
         private Instant lockedUntil;
+        private Instant lastFailure;
     }
 
     private final int maxAttempts;
@@ -51,6 +53,7 @@ public class InMemoryLoginAttemptService implements LoginAttemptService {
         }
 
         attempt.count++;
+        attempt.lastFailure = time;
 
         if (attempt.count >= maxAttempts) {
             attempt.lockedUntil = time.plus(lockDuration);
@@ -60,6 +63,20 @@ public class InMemoryLoginAttemptService implements LoginAttemptService {
     @Override
     public synchronized void clearAttempts(String email) {
         attempts.remove(key(email));
+    }
+
+    @Override
+    public synchronized void purgeStale() {
+        Instant time = now.get();
+
+        Iterator<Map.Entry<String, Attempt>> it = attempts.entrySet().iterator();
+        while (it.hasNext()) {
+            Attempt attempt = it.next().getValue();
+
+            if (time.isAfter(attempt.lastFailure.plus(lockDuration))) {
+                it.remove();
+            }
+        }
     }
 
     private String key(String email) {
