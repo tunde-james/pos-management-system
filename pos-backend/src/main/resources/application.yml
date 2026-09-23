@@ -45,3 +45,5 @@ app:
     rate-limit:
       limit: 20
       window: 1m
+    refresh:
+      ttl: 7d

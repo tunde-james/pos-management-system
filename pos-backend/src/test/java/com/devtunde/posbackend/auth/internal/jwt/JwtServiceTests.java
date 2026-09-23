@@ -26,6 +26,7 @@ class JwtServiceTests {
                 new AuthProperties.Jwt(secret, EXPIRATION_MINUTES, issuer),
                 new AuthProperties.Argon2(16, 32, 1, 16384, 2),
                 null,
+                null,
                 null);
         return new JwtService(properties);
     }

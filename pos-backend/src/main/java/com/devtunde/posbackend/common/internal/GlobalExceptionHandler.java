@@ -13,11 +13,16 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.devtunde.posbackend.common.api.FieldErrorDetail;
 import com.devtunde.posbackend.common.api.ProblemDetailException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private final ErrorProperties errorProperties;
 
@@ -31,7 +36,7 @@ public class GlobalExceptionHandler {
         ProblemDetail problemDetail = ex.toProblemDetail(errorProperties.baseUrl());
 
         ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.status());
-        
+
         for (Map.Entry<String, String> header : ex.headers().entrySet()) {
             response.header(header.getKey(), header.getValue());
         }
@@ -78,6 +83,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ProblemDetail> handleUnexpected(Exception ex) {
 
         // log server-side, never leak internals to the client
+        log.error("Unhandled exception", ex);
+
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ProblemDetail.forStatusAndDetail(
                         HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred"));

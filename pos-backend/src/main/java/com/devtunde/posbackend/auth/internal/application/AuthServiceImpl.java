@@ -1,8 +1,5 @@
 package com.devtunde.posbackend.auth.internal.application;
 
-import java.util.List;
-
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.devtunde.posbackend.auth.api.AuthService;
 import com.devtunde.posbackend.auth.api.dto.AuthResponse;
 import com.devtunde.posbackend.auth.api.dto.LoginRequest;
+import com.devtunde.posbackend.auth.api.dto.RefreshRequest;
 import com.devtunde.posbackend.auth.api.dto.SignupRequest;
 import com.devtunde.posbackend.auth.api.exception.AccountLockedException;
 import com.devtunde.posbackend.auth.api.exception.EmailAlreadyRegisteredException;
@@ -18,16 +16,19 @@ import com.devtunde.posbackend.auth.internal.domain.User;
 import com.devtunde.posbackend.auth.internal.jwt.JwtService;
 import com.devtunde.posbackend.auth.internal.mapper.UserMapper;
 import com.devtunde.posbackend.auth.internal.persistence.UserRepository;
+import io.jsonwebtoken.Claims;
 
 @Service
 public class AuthServiceImpl implements AuthService {
 
+    private final JwtService jwtService;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService;
     private final UserMapper userMapper;
     private final PhoneNormalizer phoneNormalizer;
     private final LoginAttemptService loginAttemptService;
+    private final RefreshTokenService refreshTokenService;
+    private final TokenRevocationService tokenRevocationService;
 
     public AuthServiceImpl(
             UserRepository userRepository,
@@ -35,13 +36,17 @@ public class AuthServiceImpl implements AuthService {
             JwtService jwtService,
             UserMapper userMapper,
             PhoneNormalizer phoneNormalizer,
-            LoginAttemptService loginAttemptService) {
+            LoginAttemptService loginAttemptService,
+            RefreshTokenService refreshTokenService,
+            TokenRevocationService tokenRevocationService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.userMapper = userMapper;
         this.phoneNormalizer = phoneNormalizer;
         this.loginAttemptService = loginAttemptService;
+        this.refreshTokenService = refreshTokenService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Override
@@ -61,9 +66,9 @@ public class AuthServiceImpl implements AuthService {
 
         loginAttemptService.clearAttempts(request.email());
 
-        String accessToken = issueAccessToken(user);
+        TokenPair pair = refreshTokenService.createSession(user);
 
-        return new AuthResponse(accessToken, "Signup successful", userMapper.toView(user));
+        return new AuthResponse(pair.accessToken(), pair.refreshToken(), "Signup successful", userMapper.toView(user));
     }
 
     @Override
@@ -77,9 +82,7 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmail(request.email()).orElse(null);
 
         if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-
             loginAttemptService.recordFailure(request.email());
-
             throw new InvalidCredentialsException();
         }
 
@@ -87,14 +90,32 @@ public class AuthServiceImpl implements AuthService {
 
         user.recordLogin();
 
-        String accessToken = issueAccessToken(user);
+        TokenPair pair = refreshTokenService.createSession(user);
 
-        return new AuthResponse(accessToken, "Login successful", userMapper.toView(user));
+        return new AuthResponse(pair.accessToken(), pair.refreshToken(), "Login successful", userMapper.toView(user));
     }
 
-    private String issueAccessToken(User user) {
-        return jwtService.generateToken(
-                user.getEmail(),
-                List.of(new SimpleGrantedAuthority(user.getRole().name())));
+    @Override
+    public AuthResponse refresh(RefreshRequest request) {
+
+        TokenPair pair = refreshTokenService.refresh(request.refreshToken());
+
+        return new AuthResponse(
+                pair.accessToken(), pair.refreshToken(), "Refresh successful", userMapper.toView(pair.user()));
+    }
+
+    @Override
+    public void logout(String accessToken, String refreshToken) {
+
+        if (accessToken != null) {
+            try {
+                Claims claims = jwtService.parse(accessToken);
+                tokenRevocationService.revoke(
+                        claims.getId(), claims.getExpiration().toInstant());
+            } catch (Exception e) {
+            }
+        }
+
+        refreshTokenService.revokeFamilyByToken(refreshToken);
     }
 }

@@ -16,15 +16,18 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.devtunde.posbackend.auth.internal.application.TokenRevocationService;
 import io.jsonwebtoken.Claims;
 
 @Component
 public class JwtValidator extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final TokenRevocationService tokenRevocationService;
 
-    public JwtValidator(JwtService jwtService) {
+    public JwtValidator(JwtService jwtService, TokenRevocationService tokenRevocationService) {
         this.jwtService = jwtService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Override
@@ -38,13 +41,16 @@ public class JwtValidator extends OncePerRequestFilter {
             try {
                 Claims claims = jwtService.parse(header.substring(7));
 
-                List<GrantedAuthority> auths =
-                        AuthorityUtils.commaSeparatedStringToAuthorityList(String.valueOf(claims.get("authorities")));
+                if (!tokenRevocationService.isRevoked(claims.getId())) {
 
-                UsernamePasswordAuthenticationToken auth =
-                        new UsernamePasswordAuthenticationToken(claims.getSubject(), null, auths);
+                    List<GrantedAuthority> auths = AuthorityUtils.commaSeparatedStringToAuthorityList(
+                            String.valueOf(claims.get("authorities")));
 
-                SecurityContextHolder.getContext().setAuthentication(auth);
+                    UsernamePasswordAuthenticationToken auth =
+                            new UsernamePasswordAuthenticationToken(claims.getSubject(), null, auths);
+
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                }
             } catch (Exception ex) {
                 SecurityContextHolder.clearContext();
             }
