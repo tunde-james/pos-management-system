@@ -1,0 +1,156 @@
+# =============================================================================
+# Auth — LOGOUT requests (VS Code REST Client)
+# =============================================================================
+# How to run:
+#   1. Start the backend (http://localhost:4000).
+#   2. Run top-to-bottom — chained requests reuse earlier responses.
+#
+# Notes:
+#   - All data is FAKE. Manual probes only; the automated suite is in
+#     src/test/java.
+#   - Model: logout revokes the access token's jti (in-memory blocklist) and
+#     burns the refresh family. Garbage inputs are tolerated as no-ops (204).
+#   - Expected codes: 204 logged out / no-op, 400 invalid payload.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: register Ada (201 or 409 — both fine)
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Obi",
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 2 — Setup: login Ada (tokens reused below)
+# Expected: 200
+# @name oLoginAda
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Valid logout (Bearer access token + refresh token in body)
+# Expected: 204 — no content; both halves of the session are revoked
+POST {{baseUrl}}/logout
+Authorization: Bearer {{oLoginAda.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{oLoginAda.response.body.refreshToken}}"
+}
+
+### 4 — Refresh with the burned token from request 3
+# Expected: 401 — the family is dead
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{oLoginAda.response.body.refreshToken}}"
+}
+
+### 5 — Setup: register + login Bola (garbage-Bearer persona)
+# Expected: 201 or 409, then 200
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Ade",
+  "email": "bola.ade@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348055551234"
+}
+
+### 6 — Setup: login Bola
+# Expected: 200
+# @name oLoginBola
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.ade@devtunde.com",
+  "password": "Password123!"
+}
+
+### 7 — Logout with a GARBAGE Bearer token but a VALID refresh token
+# Expected: 204 — the bad access token is ignored (no-op); the valid refresh
+# token's family is still burned
+POST {{baseUrl}}/logout
+Authorization: Bearer garbage.token.value
+Content-Type: application/json
+
+{
+  "refreshToken": "{{oLoginBola.response.body.refreshToken}}"
+}
+
+### 8 — Setup: register + login Chidi (no-header persona)
+# Expected: 201 or 409
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Okafor",
+  "email": "chidi.okafor@devtunde.com",
+  "password": "Password123!",
+  "phone": "08031234568"
+}
+
+### 9 — Setup: login Chidi
+# Expected: 200
+# @name oLoginChidi
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "chidi.okafor@devtunde.com",
+  "password": "Password123!"
+}
+
+### 10 — Logout with NO Authorization header, valid refresh token
+# Expected: 204 — the header is optional; the refresh family is still burned
+POST {{baseUrl}}/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "{{oLoginChidi.response.body.refreshToken}}"
+}
+
+### 11 — Logout with a garbage refresh token (never issued)
+# Expected: 204 — tolerated as a no-op; nothing to revoke
+POST {{baseUrl}}/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "never-issued-token"
+}
+
+### 12 — Empty JSON body
+# Expected: 400 — refreshToken is a required field (Bean Validation)
+POST {{baseUrl}}/logout
+Authorization: Bearer {{oLoginChidi.response.body.accessToken}}
+Content-Type: application/json
+
+{}
+
+### 13 — Repeat of request 3 (idempotency — logout twice)
+# Expected: 204 — second logout with already-revoked data is a safe no-op
+POST {{baseUrl}}/logout
+Authorization: Bearer {{oLoginAda.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{oLoginAda.response.body.refreshToken}}"
+}
+
+# -----------------------------------------------------------------------------
+# Revoked access tokens: the logout blocklist matters for PROTECTED routes
+# (/api/v1/** beyond auth). None exist yet — the catalog stage will be the
+# first place to probe "Bearer revoked token → 401" end to end.
+# -----------------------------------------------------------------------------

@@ -1,0 +1,140 @@
+# =============================================================================
+# Auth — REFRESH requests (VS Code REST Client)
+# =============================================================================
+# How to run:
+#   1. Start the backend (http://localhost:4000).
+#   2. Run STRICTLY top-to-bottom — requests 3-5 are a rotation/burn sequence
+#      where each request depends on the previous response.
+#
+# Notes:
+#   - All data is FAKE. Manual probes only; the automated suite is in
+#     src/test/java.
+#   - Model: every refresh ROTATES the token (old one dies). Replaying a used
+#     token burns the whole family (app.security.refresh.ttl = 7 days).
+#   - Expected codes: 200 rotated, 400 invalid payload, 401 bad/revoked token.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: register Ada (201 or 409 — both fine)
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Obi",
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 2 — Setup: login Ada (her tokens are reused below via response variables)
+# Expected: 200
+# @name rLoginAda
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Valid refresh with the freshly issued token
+# Expected: 200 — NEW accessToken + refreshToken; the one used here is now dead
+# @name rFirstRefresh
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rLoginAda.response.body.refreshToken}}"
+}
+
+### 4 — REPLAY: send the SAME (already used) token again
+# Expected: 401 — rotation means each token works once; reuse = suspected theft
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rLoginAda.response.body.refreshToken}}"
+}
+
+### 5 — Use the NEWEST token after the replay
+# Expected: 401 — the replay burned the whole family, including this fresh one
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rFirstRefresh.response.body.refreshToken}}"
+}
+
+### 6 — Garbage token (never issued)
+# Expected: 401
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "not-a-real-refresh-token"
+}
+
+### 7 — Empty JSON body
+# Expected: 400 — refreshToken required (Bean Validation)
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{}
+
+### 8 — Setup: register + login Bola (independent-session persona)
+# Expected: 201 or 409, then 200
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Ade",
+  "email": "bola.ade@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348055551234"
+}
+
+### 9 — Setup: login Bola
+# Expected: 200
+# @name rLoginBola
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.ade@devtunde.com",
+  "password": "Password123!"
+}
+
+### 10 — Refresh Bola (proves Ada's burned family did not touch Bola's)
+# Expected: 200 — families are isolated per session
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rLoginBola.response.body.refreshToken}}"
+}
+
+### 11 — Logout Bola (Bearer access token + her refresh token)
+# Expected: 204 — no content; her refresh family is now revoked
+POST {{baseUrl}}/logout
+Authorization: Bearer {{rLoginBola.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rLoginBola.response.body.refreshToken}}"
+}
+
+### 12 — Refresh with Bola's token AFTER logout
+# Expected: 401 — logout burned the family
+POST {{baseUrl}}/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{rLoginBola.response.body.refreshToken}}"
+}
+
+# -----------------------------------------------------------------------------
+# Expiry (no live request): a refresh token older than 7 days
+# (app.security.refresh.ttl) returns 401 on use. Cannot be probed quickly —
+# covered by the automated suite instead.
+# -----------------------------------------------------------------------------

@@ -1,0 +1,159 @@
+# =============================================================================
+# Auth — SIGNUP requests (VS Code REST Client)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d` (or `mvn spring-boot:run` in
+#      pos-backend) — server listens on http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE (test personas, devtunde.com emails, Nigerian numbers).
+#   - These are manual probes; the automated suite lives in src/test/java.
+#   - Expected codes: 201 created, 400 invalid payload, 409 duplicate email,
+#     429 rate limited (20 signups/min per IP — app.security.rate-limit).
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Valid signup, full valid payload
+# Expected: 201 — accessToken, refreshToken, message, user (phone in E.164)
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Obi",
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 2 — Valid signup, LOCAL Nigerian phone format (normalization check)
+# Expected: 201 — response user.phone is normalized to +2348031234568 (E.164)
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Okafor",
+  "email": "chidi.okafor@devtunde.com",
+  "password": "Password123!",
+  "phone": "08031234568"
+}
+
+### 3 — Valid signup, international format already in E.164
+# Expected: 201 — phone stays +2348098765432
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ngozi Eze",
+  "email": "ngozi.eze@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348098765432"
+}
+
+### 4 — Duplicate email (same as request 1)
+# Expected: 409 — "Email already registered" problem detail
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Obi Again",
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 5 — Missing fullName field
+# Expected: 400 — "Full name is required" field error
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "email": "missing.name@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 6 — Blank fullName
+# Expected: 400 — NotBlank violation
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "",
+  "email": "blank.name@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 7 — Invalid email format
+# Expected: 400 — "Please provide a valid email address"
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bad Email",
+  "email": "not-an-email",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 8 — Password too short (below the 8-char minimum)
+# Expected: 400 — "Password must be between 8 and 128 characters"
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Short Password",
+  "email": "short.password@devtunde.com",
+  "password": "Pass1!",
+  "phone": "+2348031234567"
+}
+
+### 9 — Missing password field
+# Expected: 400 — "Password is required"
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "No Password",
+  "email": "no.password@devtunde.com",
+  "phone": "+2348031234567"
+}
+
+### 10 — Invalid phone: too short to be a real number (custom @ValidPhoneNumber)
+# Expected: 400 — Google libphonenumber (NG region) rejects it
+#
+# NOTE: letters do NOT make a phone invalid — libphonenumber maps Latin
+# letters to keypad digits (A/B/C -> 2), so "0803ABC4567" normalizes to
+# +2348032224567 and is ACCEPTED (201). That's vanity-number behavior,
+# like 1-800-FLOWERS. Use length/pattern cases for the invalid probe.
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bad Phone",
+  "email": "bad.phone@devtunde.com",
+  "password": "Password123!",
+  "phone": "0803"
+}
+
+### 11 — fullName over the 100-character cap (overflow guard from the audit fix)
+# Expected: 400 — "Full name must be at most 100 characters"
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "long.name@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 12 — Empty JSON body
+# Expected: 400 — every NotBlank/Email constraint violated
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{}
