@@ -29,6 +29,7 @@ public class AuthServiceImpl implements AuthService {
     private final LoginAttemptService loginAttemptService;
     private final RefreshTokenService refreshTokenService;
     private final TokenRevocationService tokenRevocationService;
+    private final String dummyHash;
 
     public AuthServiceImpl(
             UserRepository userRepository,
@@ -47,6 +48,7 @@ public class AuthServiceImpl implements AuthService {
         this.loginAttemptService = loginAttemptService;
         this.refreshTokenService = refreshTokenService;
         this.tokenRevocationService = tokenRevocationService;
+        this.dummyHash = passwordEncoder.encode("no-such-account-dummy-password");
     }
 
     @Override
@@ -81,7 +83,10 @@ public class AuthServiceImpl implements AuthService {
 
         User user = userRepository.findByEmail(request.email()).orElse(null);
 
-        if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        String passwordHash = user != null ? user.getPasswordHash() : dummyHash;
+        boolean passwordMatches = passwordEncoder.matches(request.password(), passwordHash);
+
+        if (user == null || !passwordMatches) {
             loginAttemptService.recordFailure(request.email());
             throw new InvalidCredentialsException();
         }

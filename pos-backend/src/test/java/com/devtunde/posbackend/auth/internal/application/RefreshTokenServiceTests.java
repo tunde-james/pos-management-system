@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import com.devtunde.posbackend.AbstractIntegrationTest;
 import com.devtunde.posbackend.auth.api.exception.InvalidCredentialsException;
 import com.devtunde.posbackend.auth.internal.config.AuthProperties;
+import com.devtunde.posbackend.auth.internal.domain.RefreshToken;
 import com.devtunde.posbackend.auth.internal.domain.User;
 import com.devtunde.posbackend.auth.internal.jwt.JwtService;
 import com.devtunde.posbackend.auth.internal.persistence.RefreshTokenRepository;
@@ -99,5 +100,25 @@ public class RefreshTokenServiceTests extends AbstractIntegrationTest {
         Thread.sleep(30); // one real, tiny sleep — the expiry test needs real time to pass
 
         assertThatThrownBy(() -> service.refresh(pair.refreshToken())).isInstanceOf(InvalidCredentialsException.class);
+    }
+
+    @Test
+    @DisplayName("sweep deletes rows expired past one TTL but keeps active sessions")
+    void sweepDeletesOnlyStaleRows() {
+        RefreshTokenService service = newService(Duration.ofDays(7));
+        User user = createUser();
+
+        refreshTokenRepository.save(
+                RefreshToken.issue(UUID.randomUUID(), user.getId(), "stale-token-hash", Duration.ofDays(-8)));
+        refreshTokenRepository.save(
+                RefreshToken.issue(UUID.randomUUID(), user.getId(), "active-token-hash", Duration.ofDays(7)));
+
+        assertThat(refreshTokenRepository.findByTokenHash("stale-token-hash")).isPresent();
+
+        service.sweepStaleTokens();
+
+        assertThat(refreshTokenRepository.findByTokenHash("stale-token-hash")).isEmpty();
+
+        assertThat(refreshTokenRepository.findByTokenHash("active-token-hash")).isPresent();
     }
 }

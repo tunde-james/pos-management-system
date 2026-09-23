@@ -75,11 +75,19 @@ class JwtServiceTests {
     }
 
     @Test
-    @DisplayName("constructor rejects a secret shorter than 32 characters")
+    @DisplayName("constructor rejects a secret shorter than 64 characters")
     void rejectsShortSecret() {
         assertThatThrownBy(() -> newService("too-short-secret", ISSUER))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AUTH_JWT_SECRET");
+    }
+
+    @Test
+    @DisplayName("constructor rejects a secret shorter than 64 characters — HS512 needs 512 bits")
+    void rejectsSecretBelowHs512Size() {
+        assertThatThrownBy(() -> newService(SECRET.substring(0, 63), ISSUER))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("64 characters");
     }
 
     private String flipLastPayloadChar(String token) {

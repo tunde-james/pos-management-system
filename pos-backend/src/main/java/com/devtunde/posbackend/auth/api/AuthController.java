@@ -34,7 +34,12 @@ public class AuthController {
     }
 
     @PostMapping("/signup")
-    public ResponseEntity<AuthResponse> signup(@Valid @RequestBody SignupRequest request) {
+    public ResponseEntity<AuthResponse> signup(
+            @Valid @RequestBody SignupRequest request, HttpServletRequest httpRequest) {
+
+        if (!rateLimiter.tryAcquire(httpRequest.getRemoteAddr() + ":signup")) {
+            throw new TooManyRequestsException(properties.rateLimit().window().toSeconds());
+        }
 
         return ResponseEntity.status(HttpStatus.CREATED).body(authService.signup(request));
     }

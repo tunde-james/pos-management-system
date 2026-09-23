@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,6 +89,14 @@ public class RefreshTokenService {
         if (stored.isPresent()) {
             refreshTokenRepository.revokeFamily(stored.get().getFamilyId(), LocalDateTime.now());
         }
+    }
+
+    @Scheduled(fixedDelay = 3_600_000) // once per hour
+    @Transactional
+    public void sweepStaleTokens() {
+
+        LocalDateTime cutoff = LocalDateTime.now().minus(refreshTtl);
+        refreshTokenRepository.deleteStale(cutoff);
     }
 
     private String accessTokenFor(User user) {

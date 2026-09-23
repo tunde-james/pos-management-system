@@ -25,8 +25,9 @@ public class JwtService {
 
     public JwtService(AuthProperties properties) {
         this.jwtProps = properties.jwt();
-        if (jwtProps.secret() == null || jwtProps.secret().length() < 32) {
-            throw new IllegalStateException("AUTH_JWT_SECRET must be set and at least 32 characters");
+        if (jwtProps.secret() == null || jwtProps.secret().length() < 64) {
+            throw new IllegalStateException(
+                    "AUTH_JWT_SECRET must be set and at least 64 characters (512 bits for HS512)");
         }
 
         this.key = Keys.hmacShaKeyFor(jwtProps.secret().getBytes());

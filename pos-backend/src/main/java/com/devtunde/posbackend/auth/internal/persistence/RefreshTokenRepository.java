@@ -17,8 +17,14 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
 
     Optional<RefreshToken> findByTokenHash(String tokenHash);
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW) 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Modifying
     @Query("update RefreshToken t set t.revokedAt = :now " + "where t.familyId = :familyId and t.revokedAt is null")
     int revokeFamily(@Param("familyId") UUID familyId, @Param("now") LocalDateTime now);
+
+    @Transactional 
+    @Modifying
+    @Query("delete from RefreshToken t " + "where (t.revokedAt is not null and t.revokedAt < :cutoff) "
+            + "or t.expiresAt < :cutoff")
+    int deleteStale(@Param("cutoff") LocalDateTime cutoff);
 }
