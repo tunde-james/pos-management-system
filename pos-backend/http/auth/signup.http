@@ -122,8 +122,13 @@ Content-Type: application/json
   "phone": "+2348031234567"
 }
 
-### 10 — Phone containing letters (custom @ValidPhoneNumber)
-# Expected: 400 — invalid phone
+### 10 — Invalid phone: too short to be a real number (custom @ValidPhoneNumber)
+# Expected: 400 — Google libphonenumber (NG region) rejects it
+#
+# NOTE: letters do NOT make a phone invalid — libphonenumber maps Latin
+# letters to keypad digits (A/B/C -> 2), so "0803ABC4567" normalizes to
+# +2348032224567 and is ACCEPTED (201). That's vanity-number behavior,
+# like 1-800-FLOWERS. Use length/pattern cases for the invalid probe.
 POST {{baseUrl}}/signup
 Content-Type: application/json
 
@@ -131,7 +136,7 @@ Content-Type: application/json
   "fullName": "Bad Phone",
   "email": "bad.phone@devtunde.com",
   "password": "Password123!",
-  "phone": "0803ABC4567"
+  "phone": "0803"
 }
 
 ### 11 — fullName over the 100-character cap (overflow guard from the audit fix)
