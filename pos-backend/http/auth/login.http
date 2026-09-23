@@ -1,0 +1,145 @@
+# =============================================================================
+# Auth — LOGIN requests (VS Code REST Client)
+# =============================================================================
+# How to run:
+#   1. Start the backend (http://localhost:4000).
+#   2. Run requests top-to-bottom — request 1 creates the Ada user the rest
+#      of the file depends on.
+#
+# Notes:
+#   - All data is FAKE. These are manual probes; the automated suite is in
+#     src/test/java.
+#   - Expected codes: 200 ok, 400 invalid payload, 401 bad credentials,
+#     423 locked (app.security.lockout: 5 fails / 15 min), 429 rate limited
+#     (20 logins/min per IP — see the comment near the bottom).
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: register Ada (201 on first run, 409 if she already exists — both fine)
+# Expected: 201 or 409 — either way the account exists for the requests below
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Obi",
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 2 — Valid login
+# Expected: 200 — accessToken, refreshToken, message, user
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.obi@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Wrong password
+# Expected: 401 — generic invalid-credentials (no hint about which part failed)
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.obi@devtunde.com",
+  "password": "WrongPassword123!"
+}
+
+### 4 — Unknown email (also: response should cost the same ~Argon2 time as #3)
+# Expected: 401 — same generic error and roughly the same latency as #3
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ghost.user@devtunde.com",
+  "password": "Password123!"
+}
+
+### 5 — Invalid email format
+# Expected: 400 — "Please provide a valid email address"
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "not-an-email",
+  "password": "Password123!"
+}
+
+### 6 — Missing email field
+# Expected: 400 — "Email is required"
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "password": "Password123!"
+}
+
+### 7 — Blank password
+# Expected: 400 — "Password is required"
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.obi@devtunde.com",
+  "password": ""
+}
+
+### 8 — Password below the 8-char minimum
+# Expected: 400 — "Password must be between 8 and 128 characters"
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.obi@devtunde.com",
+  "password": "Pass1!"
+}
+
+### 9 — Empty JSON body
+# Expected: 400 — both NotBlank constraints violated
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{}
+
+### 10 — Setup: register Bola (lockout test persona)
+# Expected: 201 or 409 — account exists for the lockout flow below
+POST {{baseUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Ade",
+  "email": "bola.ade@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348055551234"
+}
+
+### 11 — Wrong password for Bola — SEND THIS 5 TIMES IN A ROW
+# Expected: 401 on every send — each failure counts toward the lockout
+# (app.security.lockout.max-attempts = 5)
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.ade@devtunde.com",
+  "password": "WrongPassword123!"
+}
+
+### 12 — Correct password for Bola AFTER 5 failures
+# Expected: 423 — account locked. A correct password does not unlock it.
+# Unlock happens automatically after 15 minutes (lock-duration).
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.ade@devtunde.com",
+  "password": "Password123!"
+}
+
+# -----------------------------------------------------------------------------
+# Rate limit (no live request — it would poison the shared per-IP bucket):
+# sending ANY 21 login requests within one minute from the same IP returns
+# 429 + Retry-After: 60 on the 21st (app.security.rate-limit.limit = 20).
+# -----------------------------------------------------------------------------
