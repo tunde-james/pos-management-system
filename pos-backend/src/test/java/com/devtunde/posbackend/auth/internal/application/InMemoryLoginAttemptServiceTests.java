@@ -105,6 +105,23 @@ class InMemoryLoginAttemptServiceTests {
     }
 
     @Test
+    @DisplayName("failure counts older than the lock duration expire — a stale history does not lock")
+    void staleFailureCountExpiresOnItsOwn() {
+        InMemoryLoginAttemptService service = newService();
+
+        for (int i = 0; i < MAX_ATTEMPTS - 1; i++) {
+            service.recordFailure("stale.count@devtunde.com");
+        }
+
+        advance(LOCK_DURATION.plusSeconds(1));
+
+        // one fresh failure after a long idle gap must NOT lock — the ancient failures expired
+        service.recordFailure("stale.count@devtunde.com");
+
+        assertThat(service.isLocked("stale.count@devtunde.com")).isFalse();
+    }
+
+    @Test
     @DisplayName("purgeStale drops entries idle longer than the lock duration — counters restart cleanly")
     void purgeStaleRemovesOldEntries() {
         InMemoryLoginAttemptService service = newService();

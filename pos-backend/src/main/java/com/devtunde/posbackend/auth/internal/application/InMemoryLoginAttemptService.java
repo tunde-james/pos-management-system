@@ -44,6 +44,12 @@ public class InMemoryLoginAttemptService implements LoginAttemptService {
 
         Instant time = now.get();
 
+        if (attempt.lockedUntil == null
+                && attempt.lastFailure != null
+                && time.isAfter(attempt.lastFailure.plus(lockDuration))) {
+            attempt.count = 0;
+        }
+
         if (attempt.lockedUntil != null) {
             if (time.isBefore(attempt.lockedUntil)) {
                 return;
