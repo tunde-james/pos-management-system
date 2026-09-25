@@ -3,11 +3,16 @@ package com.devtunde.posbackend.common.internal;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -59,6 +64,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(problemDetail);
     }
 
+    @ExceptionHandler(AccessDeniedException.class)
+    public void handleAccessDenied(AccessDeniedException ex) throws AccessDeniedException {
+        throw ex;
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ProblemDetail> handleNotFound(NoResourceFoundException ex) {
 
@@ -77,6 +87,23 @@ public class GlobalExceptionHandler {
         problemDetail.setType(URI.create(errorProperties.baseUrl() + "/malformed-body"));
         problemDetail.setTitle("Malformed request body");
         return ResponseEntity.badRequest().body(problemDetail);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ProblemDetail> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+
+        String allowed =
+                ex.getSupportedHttpMethods().stream().map(HttpMethod::name).collect(Collectors.joining(","));
+
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.METHOD_NOT_ALLOWED, "The HTTP method is not allowed on this resource.");
+
+        problemDetail.setType(URI.create(errorProperties.baseUrl() + "/method-not-allowed"));
+        problemDetail.setTitle("Method not allowed");
+
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .header(HttpHeaders.ALLOW, allowed)
+                .body(problemDetail);
     }
 
     @ExceptionHandler(Exception.class)

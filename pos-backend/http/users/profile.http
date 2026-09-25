@@ -1,0 +1,127 @@
+# =============================================================================
+# Users — PROFILE requests (VS Code REST Client) — GET /api/v1/users/profile
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE (test personas, devtunde.com emails, Nigerian numbers).
+#   - The automated suite for these endpoints: UsersApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the latest login request (### 2 for Ada, ### 14 for Chidi) to
+#     refresh the chained tokens, then continue.
+#   - Expected codes: 200 self profile, 401 no/invalid/revoked/expired token, 405 wrong
+#     method, 204 logout.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/users
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: signup Ada (profile persona)
+# Expected: 201
+# @name adaSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Obi",
+  "email": "ada.profile@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 2 — Setup: login Ada, capture both tokens
+# Expected: 200
+# @name adaLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.profile@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Read own profile with a valid token
+# Expected: 200 — publicId, fullName "Ada Obi", email, phone E.164, role ROLE_USER
+GET {{baseUrl}}/profile
+Authorization: Bearer {{adaLogin.response.body.accessToken}}
+
+### 4 — No Authorization header
+# Expected: 401
+GET {{baseUrl}}/profile
+
+### 5 — Garbage token
+# Expected: 401
+GET {{baseUrl}}/profile
+Authorization: Bearer not-a-real-jwt
+
+### 6 — Raw JWT without the "Bearer " prefix
+# Expected: 401 — the filter only accepts the Bearer scheme
+GET {{baseUrl}}/profile
+Authorization: {{adaLogin.response.body.accessToken}}
+
+### 7 — Wrong auth scheme (Basic) with the JWT in it
+# Expected: 401
+GET {{baseUrl}}/profile
+Authorization: Basic {{adaLogin.response.body.accessToken}}
+
+### 8 — Wrong method: POST to /profile
+# Expected: 405 — only GET is mapped
+POST {{baseUrl}}/profile
+Authorization: Bearer {{adaLogin.response.body.accessToken}}
+
+### 9 — Wrong method: PUT to /profile (also proves profile is read-only for now)
+# Expected: 405
+PUT {{baseUrl}}/profile
+Authorization: Bearer {{adaLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{"fullName": "Hacker McEditface"}
+
+### 10 — THE JTI PROBE, step 1: logout Ada
+# Expected: 204 — revokes the access-token jti and burns the refresh family.
+# This is the end-to-end revocation check ticket 0004 predicted: the profile
+# route was the first protected route that made it probeable.
+POST {{authUrl}}/logout
+Authorization: Bearer {{adaLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{adaLogin.response.body.refreshToken}}"
+}
+
+### 11 — THE JTI PROBE, step 2: read profile with the dead token
+# Expected: 401
+GET {{baseUrl}}/profile
+Authorization: Bearer {{adaLogin.response.body.accessToken}}
+
+### 12 — Second persona, setup: signup Chidi
+# Expected: 201
+# @name chidiSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Okafor",
+  "email": "chidi.profile@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234568"
+}
+
+### 13 — Second persona, setup: login Chidi
+# Expected: 200
+# @name chidiLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "chidi.profile@devtunde.com",
+  "password": "Password123!"
+}
+
+### 14 — Profile returns THE CALLER's data, never someone else's
+# Expected: 200 — email is chidi.profile@devtunde.com (self), not Ada's
+GET {{baseUrl}}/profile
+Authorization: Bearer {{chidiLogin.response.body.accessToken}}

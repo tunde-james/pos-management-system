@@ -1,0 +1,128 @@
+# =============================================================================
+# Users — FETCH BY ID requests (VS Code REST Client) — GET /api/v1/users/{id}
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisite (between requests 1 and 2): promote Ada to admin — production has
+# no role-grant endpoint yet (audit watch item), so seed it with SQL:
+#
+#     UPDATE users SET role = 'ROLE_ADMIN' WHERE email = 'ada.byid@devtunde.com';
+#
+#   (docker compose exec mysql mysql -u$POS_DB_USER -p posbackend -e "..." works,
+#    or use any SQL client on 127.0.0.1:3307.) Login AFTER promoting — the role is
+#    baked into the JWT at issue time, so earlier tokens stay non-admin.
+#
+# Notes:
+#   - Run top-to-bottom; later requests assume earlier ones ran. FAKE data only.
+#   - User ids are chained from login responses — never hardcoded.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the login (### 2 admin, ### 4 Bola) to refresh the chained tokens.
+#   - Expected codes: 200 target view (admin only), 403 non-admin caller,
+#     404 unknown id, 401 no/invalid/revoked/expired token, 405 wrong method.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/users
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: signup Ada (the future admin)
+# Expected: 201
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Admin",
+  "email": "ada.byid@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031230001"
+}
+
+### 2 — RUN THE PROMOTION SQL NOW (see header), then login
+# Expected: 200 — adminLogin token carries ROLE_ADMIN
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.byid@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Setup: signup Bola (the fetch target)
+# Expected: 201
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Ade",
+  "email": "bola.byid@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031230002"
+}
+
+### 4 — Setup: login Bola — her response carries her publicId
+# Expected: 200
+# @name bolaLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.byid@devtunde.com",
+  "password": "Password123!"
+}
+
+### 5 — Admin fetches Bola by her publicId (chained from login, never hardcoded)
+# Expected: 200 — fullName "Bola Ade", email matches, role ROLE_USER;
+# NO passwordHash anywhere in the body
+GET {{baseUrl}}/{{bolaLogin.response.body.user.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 6 — Admin fetches herself by her own publicId
+# Expected: 200 — email ada.byid@devtunde.com, role ROLE_ADMIN
+GET {{baseUrl}}/{{adminLogin.response.body.user.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 7 — Well-formed UUID that matches no user
+# Expected: 404 — "User not found" problem detail
+GET {{baseUrl}}/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 8 — Regular user fetches her OWN id — still forbidden (by-id is admin-only)
+# Expected: 403 — self-service has its own route: /users/profile
+GET {{baseUrl}}/{{bolaLogin.response.body.user.publicId}}
+Authorization: Bearer {{bolaLogin.response.body.accessToken}}
+
+### 9 — Regular user fetches someone else — forbidden either way
+# Expected: 403
+GET {{baseUrl}}/{{adminLogin.response.body.user.publicId}}
+Authorization: Bearer {{bolaLogin.response.body.accessToken}}
+
+### 10 — No token
+# Expected: 401
+GET {{baseUrl}}/{{bolaLogin.response.body.user.publicId}}
+
+### 11 — Garbage token
+# Expected: 401
+GET {{baseUrl}}/{{bolaLogin.response.body.user.publicId}}
+Authorization: Bearer garbage-token
+
+### 12 — Wrong method: POST to /users/{id}
+# Expected: 405
+POST {{baseUrl}}/{{bolaLogin.response.body.user.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 13 — Admin logs out, then the dead token can no longer fetch
+# Expected: 204
+POST {{authUrl}}/logout
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{adminLogin.response.body.refreshToken}}"
+}
+
+### 14 — Fetch with the revoked admin token
+# Expected: 401
+GET {{baseUrl}}/{{bolaLogin.response.body.user.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
