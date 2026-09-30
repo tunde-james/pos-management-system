@@ -1,0 +1,132 @@
+# =============================================================================
+# Users — LIST ALL requests (VS Code REST Client) — GET /api/v1/users
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisite (between requests 1 and 2): promote Ada to admin with SQL
+# (no role-grant endpoint exists yet — audit watch item):
+#
+#     UPDATE users SET role = 'ROLE_ADMIN' WHERE email = 'ada.list@devtunde.com';
+#
+#   Login AFTER promoting — the role is baked into the JWT at issue time.
+#
+# Notes:
+#   - Run top-to-bottom; later requests assume earlier ones ran. FAKE data only.
+#   - The list is a bare JSON array (no pagination — parked in launch-prep).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the login (### 2 admin, ### 5 Bola) to refresh the chained tokens.
+#   - Expected codes: 200 list (admin only), 403 non-admin, 401 no/invalid/
+#     revoked/expired token, 405 wrong method.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1/users
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: signup Ada (the future admin)
+# Expected: 201
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Ada Admin",
+  "email": "ada.list@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031230011"
+}
+
+### 2 — RUN THE PROMOTION SQL NOW (see header), then login
+# Expected: 200 — adminLogin token carries ROLE_ADMIN
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "ada.list@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Setup: signup Bola (regular staff)
+# Expected: 201
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Ade",
+  "email": "bola.list@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031230012"
+}
+
+### 4 — Setup: signup Chidi (regular staff)
+# Expected: 201
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Okafor",
+  "email": "chidi.list@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031230013"
+}
+
+### 5 — Setup: login as Bola (regular staff)
+# Expected: 200
+# @name bolaLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.list@devtunde.com",
+  "password": "Password123!"
+}
+
+### 6 — Admin lists all users
+# Expected: 200 — bare array; at least 3 entries; includes the Ada/Bola/Chidi
+# emails below; every entry has publicId, fullName, email, phone, role —
+# and NO passwordHash
+GET {{baseUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 7 — Regular staff lists users — forbidden
+# Expected: 403
+GET {{baseUrl}}
+Authorization: Bearer {{bolaLogin.response.body.accessToken}}
+
+### 8 — No token
+# Expected: 401
+GET {{baseUrl}}
+
+### 9 — Garbage token
+# Expected: 401
+GET {{baseUrl}}
+Authorization: Bearer not-a-real-jwt
+
+### 10 — Wrong method: POST to the list route
+# Expected: 405
+POST {{baseUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{"fullName": "Nope"}
+
+### 11 — Wrong method: DELETE the list route
+# Expected: 405
+DELETE {{baseUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 12 — Admin logs out
+# Expected: 204
+POST {{authUrl}}/logout
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{adminLogin.response.body.refreshToken}}"
+}
+
+### 13 — List with the revoked admin token
+# Expected: 401
+GET {{baseUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
