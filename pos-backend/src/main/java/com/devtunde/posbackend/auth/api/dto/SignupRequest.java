@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-import com.devtunde.posbackend.auth.api.validation.ValidPhoneNumber;
+import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
 
 public record SignupRequest(
         @NotBlank(message = "Full name is required")

@@ -1,4 +1,4 @@
-package com.devtunde.posbackend.auth.api.validation;
+package com.devtunde.posbackend.common.api.validation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

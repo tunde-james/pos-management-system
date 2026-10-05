@@ -16,6 +16,7 @@ import com.devtunde.posbackend.auth.internal.domain.User;
 import com.devtunde.posbackend.auth.internal.jwt.JwtService;
 import com.devtunde.posbackend.auth.internal.mapper.UserMapper;
 import com.devtunde.posbackend.auth.internal.persistence.UserRepository;
+import com.devtunde.posbackend.common.api.validation.PhoneNormalizer;
 import io.jsonwebtoken.Claims;
 
 @Service
