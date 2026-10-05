@@ -30,7 +30,7 @@ POST {{authUrl}}/login
 Content-Type: application/json
 
 {
-  "email": "ada.list@devtunde.com",
+  "email": "admin@devtunde.com",
   "password": "Password123!"
 }
 

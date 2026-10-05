@@ -9,15 +9,21 @@
 #   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
 #   2. Click the "Send Request" CodeLens above any request below.
 #
-# Prerequisites: an admin persona (see http/store/create.http header for the
-# SQL promotion one-liner).
+# Prerequisites (TWO admin personas — see request 8 for why):
+#   a) admin@devtunde.com — the working admin (same one as every other store
+#      probe file). Promote with:
+#        update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#   b) boss@devtunde.com — a DEDICATED admin who is NEVER assigned a store by
+#      any probe file, so request 10's expected 404 stays stable no matter
+#      which files ran before (review round 1 finding). Promote with:
+#        update users set role = 'ROLE_ADMIN' where email = 'boss@devtunde.com';
 #
 # Notes:
 #   - Run top-to-bottom on first use — later requests assume earlier ones ran.
 #   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
 #   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
-#     re-send requests 2 (manager) and 3 (admin) to refresh the chained tokens.
-#   - Re-running: request 1's signup returns 409 — harmless, persona persists.
+#     re-send requests 2 (manager), 3 (admin) and 9 (boss) to refresh the chain.
+#   - Re-running: requests 1, 8 and 11 return 409 (personas persist) — harmless.
 #   - Expected codes: 200 own store, 401 no/invalid token, 404 no store,
 #     405 wrong method, 204 delete.
 # =============================================================================
@@ -49,7 +55,7 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 3 — Setup: login the admin persona
+### 3 — Setup: login the working admin persona
 # Expected: 200
 # @name adminLogin
 POST {{authUrl}}/login
@@ -92,12 +98,40 @@ GET {{storeUrl}}/my-store
 GET {{storeUrl}}/my-store
 Authorization: Bearer not-a-real-jwt
 
-### 8 — my-store as the ADMIN (who runs no store)
-# Expected: 404 — data-gated, not role-gated: admins are not store admins by default
-GET {{storeUrl}}/my-store
-Authorization: Bearer {{adminLogin.response.body.accessToken}}
+### 8 — Setup: signup the DEDICATED never-assigned admin (review round 1)
+# Expected: 201 (409 if he already exists — either way the account exists)
+# boss is intentionally given a store by NO probe file — see request 10.
+# @name bossSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
 
-### 9 — Setup: signup a storeless persona
+{
+  "fullName": "Boss Overseer",
+  "email": "boss@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234574"
+}
+
+### 9 — Setup: login boss
+# Expected: 200
+# @name bossLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "boss@devtunde.com",
+  "password": "Password123!"
+}
+
+### 10 — my-store as an admin with no store
+# Expected: 404 — data-gated, not role-gated. STABLE across probe files because
+# boss is the one persona no file ever assigns a store to (review round 1
+# finding 2: the working admin gets stores in the other files, which used to
+# flip this probe's result to 200).
+GET {{storeUrl}}/my-store
+Authorization: Bearer {{bossLogin.response.body.accessToken}}
+
+### 11 — Setup: signup a storeless persona
 # Expected: 201 (409 if she already exists — either way the account exists)
 # @name regularSignup
 POST {{authUrl}}/signup
@@ -110,7 +144,7 @@ Content-Type: application/json
   "phone": "+2348031234571"
 }
 
-### 10 — Setup: login the storeless persona
+### 12 — Setup: login the storeless persona
 # Expected: 200
 # @name regularLogin
 POST {{authUrl}}/login
@@ -121,22 +155,22 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 11 — my-store with no store assigned
+### 13 — my-store with no store assigned
 # Expected: 404 — Bola has no store; the data is the gate
 GET {{storeUrl}}/my-store
 Authorization: Bearer {{regularLogin.response.body.accessToken}}
 
-### 12 — Wrong method: POST to my-store
+### 14 — Wrong method: POST to my-store
 # Expected: 405 — Allow: GET
 POST {{storeUrl}}/my-store
 Authorization: Bearer {{managerLogin.response.body.accessToken}}
 
-### 13 — Admin soft-deletes the managed store
+### 15 — Admin soft-deletes the managed store
 # Expected: 204
 DELETE {{storeUrl}}/{{createManaged.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 14 — my-store as the manager after deletion
+### 16 — my-store as the manager after deletion
 # Expected: 200 with status DELETED — soft delete preserves history; the manager
 # still sees the store, marked gone
 GET {{storeUrl}}/my-store
