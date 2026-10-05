@@ -1,0 +1,99 @@
+# =============================================================================
+# Store — LIST requests (VS Code REST Client) — GET /api/v1/stores (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites: an admin persona (see http/store/create.http header for the
+# SQL promotion one-liner).
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
+#   - Re-running: request 2's signup returns 409 — harmless, persona persists.
+#   - Expected codes: 200 list (array, ALL statuses — filter client-side),
+#     401 no/invalid token, 403 non-admin, 405 wrong method, 404 trailing slash.
+# =============================================================================
+
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Listless",
+  "email": "bola.listless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234568"
+}
+
+### 3 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.listless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 4 — List all stores as admin
+# Expected: 200 — array of stores, every status included
+GET {{storeUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 5 — No Authorization header
+# Expected: 401
+GET {{storeUrl}}
+
+### 6 — Garbage token
+# Expected: 401
+GET {{storeUrl}}
+Authorization: Bearer not-a-real-jwt
+
+### 7 — List as a regular user
+# Expected: 403 — the collection is admin-only
+GET {{storeUrl}}
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 8 — Wrong method: DELETE against the collection
+# Expected: 405 — Allow: GET, POST
+DELETE {{storeUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 9 — Wrong method: PUT against the collection
+# Expected: 405 — Allow: GET, POST
+PUT {{storeUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{}
+
+### 10 — Trailing slash
+# Expected: 404 — Spring 7 / Boot 4 does not do trailing-slash matching
+GET {{storeUrl}}/
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 11 — HEAD against the collection
+# Expected: 200 — Spring auto-supports HEAD for GET routes (empty body)
+HEAD {{storeUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}

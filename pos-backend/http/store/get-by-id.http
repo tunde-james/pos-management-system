@@ -1,0 +1,134 @@
+# =============================================================================
+# Store — GET BY ID requests (VS Code REST Client) — GET /api/v1/stores/{id} (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites: an admin persona (see http/store/create.http header for the
+# SQL promotion one-liner).
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
+#   - Re-running: requests 2 and 11 return 409 (brand/email persist) — harmless.
+#   - Expected codes: 200 found, 401 no/invalid token, 403 non-admin, 404 unknown
+#     id, 204 delete, 500 known wart for non-UUID paths (see request 10).
+# =============================================================================
+
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a store to fetch
+# Expected: 201
+# @name createStore
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Gettable Store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "gettable-store@devtunde.com"
+  }
+}
+
+### 3 — Fetch by publicId
+# Expected: 200 — brand "Gettable Store", createdAt/updatedAt present
+GET {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 4 — Unknown id
+# Expected: 404 — "Store not found"
+GET {{storeUrl}}/99999999-9999-9999-9999-999999999999
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 5 — No Authorization header
+# Expected: 401
+GET {{storeUrl}}/{{createStore.response.body.publicId}}
+
+### 6 — Garbage token
+# Expected: 401
+GET {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer not-a-real-jwt
+
+### 7 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Getless",
+  "email": "bola.getless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234569"
+}
+
+### 8 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.getless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 9 — Fetch as a regular user
+# Expected: 403 — by-id reads are admin-only
+GET {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 10 — Non-UUID path segment
+# Expected: 500 — KNOWN WART: MethodArgumentTypeMismatchException hits the
+# catch-all handler (parked hardening item from the security audit; the suite
+# pins the UUID paths, not this one). Documented, not fixed.
+GET {{storeUrl}}/not-a-uuid
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 11 — Setup: create a second store, then soft-delete it
+# Expected: 201
+# @name createDoomed
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Doomed Get Store",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "doomed-get@devtunde.com"
+  }
+}
+
+### 12 — Soft-delete it
+# Expected: 204
+DELETE {{storeUrl}}/{{createDoomed.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 13 — Fetch the deleted store
+# Expected: 200 with status DELETED — the soft-delete contract: the row survives
+GET {{storeUrl}}/{{createDoomed.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}

@@ -1,0 +1,191 @@
+# =============================================================================
+# Store — UPDATE requests (VS Code REST Client) — PUT /api/v1/stores/{id} (ADMIN)
+# =============================================================================
+# Semantics (ticket 0007, Q6): PARTIAL update — absent fields are LEFT
+# UNCHANGED (nulls ignored). Present-but-empty strings are honored. When
+# contact IS present it must be complete (replaced as a whole unit).
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites: an admin persona (see http/store/create.http header for the
+# SQL promotion one-liner).
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
+#   - Re-running: request 2 returns 409 (brand persists) — harmless.
+#   - Expected codes: 200 updated, 400 ghost admin/bad storeType/incomplete
+#     contact, 401 no/invalid token, 403 non-admin, 404 unknown store id.
+# =============================================================================
+
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a store to update
+# Expected: 201
+# @name createStore
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Updatable Store",
+  "description": "Before the update",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "updatable-store@devtunde.com"
+  }
+}
+
+### 3 — Update the brand ONLY
+# Expected: 200 — brand changed; description/storeType/status/contact untouched
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Rebranded Store"
+}
+
+### 4 — Update the description only
+# Expected: 200
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "description": "After the update"
+}
+
+### 5 — Block the store via status
+# Expected: 200 — status BLOCKED (temporarily closed; revivable)
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "status": "BLOCKED"
+}
+
+### 6 — Update the contact (must be complete — replaced as a unit)
+# Expected: 200 — address, phone and email all replaced
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "contact": {
+    "address": "45 New Address, Ikeja",
+    "phone": "08087654321",
+    "email": "updatable-store@devtunde.com"
+  }
+}
+
+### 7 — Setup: signup a second persona to reassign to
+# Expected: 201 (409 if he already exists — either way the account exists)
+# @name secondSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Second",
+  "email": "chidi.second@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234572"
+}
+
+### 8 — Setup: login the second persona
+# Expected: 200
+# @name secondLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "chidi.second@devtunde.com",
+  "password": "Password123!"
+}
+
+### 9 — Reassign the store admin
+# Expected: 200 — storeAdminPublicId is now Chidi's
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "storeAdminPublicId": "{{secondLogin.response.body.user.publicId}}"
+}
+
+### 10 — Reassign to a ghost admin
+# Expected: 400 — "Store admin not found" (payload problem, NOT a 404)
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "storeAdminPublicId": "11111111-1111-1111-1111-111111111111"
+}
+
+### 11 — Unknown store id
+# Expected: 404 — "Store not found"
+PUT {{storeUrl}}/99999999-9999-9999-9999-999999999999
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "No Such Store"
+}
+
+### 12 — No Authorization header
+# Expected: 401
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+
+{
+  "brand": "Tokenless Update"
+}
+
+### 13 — Update as a regular user
+# Expected: 403 — updates are admin-only
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{secondLogin.response.body.accessToken}}
+
+{
+  "brand": "Regular User Update"
+}
+
+### 14 — Unknown storeType in the body
+# Expected: 400, never 500 — the enum rejects it at deserialization
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "storeType": "MALL"
+}
+
+### 15 — Empty body is a legal no-op
+# Expected: 200 — store returned unchanged (all-null update, nulls ignored)
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{}
