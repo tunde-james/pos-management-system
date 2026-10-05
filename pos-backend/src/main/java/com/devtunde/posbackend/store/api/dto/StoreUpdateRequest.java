@@ -5,6 +5,7 @@ import java.util.UUID;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
@@ -12,6 +13,7 @@ import com.devtunde.posbackend.store.api.StoreStatus;
 import com.devtunde.posbackend.store.api.StoreType;
 
 public record StoreUpdateRequest(
+        @Pattern(regexp = "(?U)(?s).*\\S.*", message = "Brand must not be blank")
         @Size(max = 100, message = "Brand must be at most 100 characters")
         String brand,
 

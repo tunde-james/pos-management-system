@@ -277,6 +277,22 @@ class StoreApiTests extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("Creating a second store for an admin who already runs one returns 409")
+    void createWithAlreadyAssignedAdminReturns409() throws Exception {
+        String adminToken = adminToken();
+        String managerId = anyManagerId();
+
+        createStoreAsAdmin(adminToken, managerId, "First Manager Store", uniqueStoreEmail());
+
+        mockMvc.perform(post("/api/v1/stores")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createStoreBody("Second Manager Store", managerId, uniqueStoreEmail())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Store already exists"));
+    }
+
+    @Test
     @DisplayName("Creating a store with a blank brand returns 400 with a field error")
     void createWithBlankBrandReturns400() throws Exception {
         String adminToken = adminToken();
@@ -447,6 +463,50 @@ class StoreApiTests extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("Updating with a whitespace-only brand returns 400, but null still means unchanged")
+    void updateWithWhitespaceBrandReturns400() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Whitespace Guard Store", uniqueStoreEmail());
+
+        String body = """
+                  {
+                      "brand": "   "
+                  }
+                  """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[*].field", hasItem("brand")));
+    }
+
+    @Test
+    @DisplayName("Updating the contact normalizes the phone to E.164, same as create")
+    void updateContactNormalizesPhoneToE164() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Phone Format Store", uniqueStoreEmail());
+
+        String body = """
+                  {
+                      "contact": {
+                          "address": "45 New Address, Ikeja",
+                          "phone": "08087654321",
+                          "email": "%s"
+                      }
+                  }
+                  """.formatted(uniqueStoreEmail());
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contact.phone").value("+2348087654321"));
     }
 
     // ---------- DELETE /api/v1/stores/{id} ----------

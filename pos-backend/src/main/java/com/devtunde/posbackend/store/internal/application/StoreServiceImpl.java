@@ -44,6 +44,10 @@ public class StoreServiceImpl implements StoreService {
 
         UUID adminId = resolveAdmin(request.storeAdminPublicId());
 
+        if (storeRepository.findByStoreAdminId(adminId).isPresent()) {
+            throw new StoreAlreadyExistsException("store admin");
+        }
+
         if (storeRepository.findByBrand(request.brand()).isPresent()) {
             throw new StoreAlreadyExistsException("brand");
         }
@@ -122,6 +126,11 @@ public class StoreServiceImpl implements StoreService {
         }
 
         storeMapper.update(request, store);
+
+        if (request.contact() != null) {
+            store.getContact()
+                    .setPhone(phoneNormalizer.normalize(request.contact().phone()));
+        }
 
         return storeMapper.toResponse(storeRepository.save(store));
     }
