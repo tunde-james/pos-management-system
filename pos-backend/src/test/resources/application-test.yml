@@ -1,0 +1,4 @@
+app:
+  security:
+    jwt:
+      secret: 'test-only-secret-not-for-production-0000000000000000000000000000'
