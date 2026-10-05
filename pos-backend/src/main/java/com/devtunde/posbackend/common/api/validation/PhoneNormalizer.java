@@ -1,4 +1,4 @@
-package com.devtunde.posbackend.auth.internal.application;
+package com.devtunde.posbackend.common.api.validation;
 
 import org.springframework.stereotype.Component;
 

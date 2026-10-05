@@ -1,0 +1,177 @@
+# =============================================================================
+# Store — MY-STORE requests (VS Code REST Client) — GET /api/v1/stores/my-store
+# =============================================================================
+# my-store resolves the CALLER's own store by storeAdminId = caller's publicId.
+# No role gate — the DATA is the gate: a caller with no store gets an honest 404.
+# This is the endpoint ROLE_STORE_MANAGER personas live on.
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (TWO admin personas — see request 8 for why):
+#   a) admin@devtunde.com — the working admin (same one as every other store
+#      probe file). Promote with:
+#        update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#   b) boss@devtunde.com — a DEDICATED admin who is NEVER assigned a store by
+#      any probe file, so request 10's expected 404 stays stable no matter
+#      which files ran before (review round 1 finding). Promote with:
+#        update users set role = 'ROLE_ADMIN' where email = 'boss@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send requests 2 (manager), 3 (admin) and 9 (boss) to refresh the chain.
+#   - Re-running: requests 1, 8 and 11 return 409 (personas persist) — harmless.
+#   - Expected codes: 200 own store, 401 no/invalid token, 404 no store,
+#     405 wrong method, 204 delete.
+# =============================================================================
+
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: signup the manager persona
+# Expected: 201 (409 if he already exists — either way the account exists)
+# @name managerSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Manager",
+  "email": "chidi.manager@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234570"
+}
+
+### 2 — Setup: login the manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "chidi.manager@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Setup: login the working admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 4 — Admin creates a store and ASSIGNS Chidi as store admin
+# Expected: 201
+# @name createManaged
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Managed Branch",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "managed-branch@devtunde.com"
+  }
+}
+
+### 5 — my-store as the assigned manager
+# Expected: 200 — brand "Managed Branch", storeAdminPublicId = Chidi's publicId
+GET {{storeUrl}}/my-store
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 6 — No Authorization header
+# Expected: 401
+GET {{storeUrl}}/my-store
+
+### 7 — Garbage token
+# Expected: 401
+GET {{storeUrl}}/my-store
+Authorization: Bearer not-a-real-jwt
+
+### 8 — Setup: signup the DEDICATED never-assigned admin (review round 1)
+# Expected: 201 (409 if he already exists — either way the account exists)
+# boss is intentionally given a store by NO probe file — see request 10.
+# @name bossSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Boss Overseer",
+  "email": "boss@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234574"
+}
+
+### 9 — Setup: login boss
+# Expected: 200
+# @name bossLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "boss@devtunde.com",
+  "password": "Password123!"
+}
+
+### 10 — my-store as an admin with no store
+# Expected: 404 — data-gated, not role-gated. STABLE across probe files because
+# boss is the one persona no file ever assigns a store to (review round 1
+# finding 2: the working admin gets stores in the other files, which used to
+# flip this probe's result to 200).
+GET {{storeUrl}}/my-store
+Authorization: Bearer {{bossLogin.response.body.accessToken}}
+
+### 11 — Setup: signup a storeless persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 12 — Setup: login the storeless persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 13 — my-store with no store assigned
+# Expected: 404 — Bola has no store; the data is the gate
+GET {{storeUrl}}/my-store
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 14 — Wrong method: POST to my-store
+# Expected: 405 — Allow: GET
+POST {{storeUrl}}/my-store
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 15 — Admin soft-deletes the managed store
+# Expected: 204
+DELETE {{storeUrl}}/{{createManaged.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 16 — my-store as the manager after deletion
+# Expected: 200 with status DELETED — soft delete preserves history; the manager
+# still sees the store, marked gone
+GET {{storeUrl}}/my-store
+Authorization: Bearer {{managerLogin.response.body.accessToken}}

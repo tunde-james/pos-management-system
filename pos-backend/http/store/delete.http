@@ -1,0 +1,134 @@
+# =============================================================================
+# Store — DELETE requests (VS Code REST Client) — DELETE /api/v1/stores/{id} (ADMIN)
+# =============================================================================
+# Semantics (ticket 0007, Q8): DELETE is SOFT — it flips status to DELETED and
+# returns 204. The row is NEVER removed (history keeps a valid reference).
+# BLOCKED (temporarily closed) and DELETED (gone) are different states.
+# Deleting twice is idempotent (both 204). Revival via update is legal — no
+# terminality is enforced.
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites: an admin persona (see http/store/create.http header for the
+# SQL promotion one-liner).
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
+#   - Re-running: request 2 returns 409 (brand persists) — harmless.
+#   - Expected codes: 204 deleted (idempotent), 200 post-delete read shows
+#     status DELETED, 401 no/invalid token, 403 non-admin, 404 unknown id,
+#     405 wrong method.
+# =============================================================================
+
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a store to delete
+# Expected: 201
+# @name createStore
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Doomed Store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "doomed-store@devtunde.com"
+  }
+}
+
+### 3 — Delete it
+# Expected: 204 — no body
+DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 4 — Delete it AGAIN (idempotent)
+# Expected: 204 — deleting a DELETED store is a no-op that still succeeds
+DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 5 — Fetch it after deletion
+# Expected: 200 with status DELETED — the soft-delete contract, visible
+GET {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 6 — No Authorization header
+# Expected: 401
+DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+
+### 7 — Garbage token
+# Expected: 401
+DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer not-a-real-jwt
+
+### 8 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Deleteless",
+  "email": "bola.deleteless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234573"
+}
+
+### 9 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.deleteless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 10 — Delete as a regular user
+# Expected: 403 — deletion is admin-only
+DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 11 — Unknown id
+# Expected: 404 — "Store not found"
+DELETE {{storeUrl}}/99999999-9999-9999-9999-999999999999
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 12 — Wrong method: POST against the store path
+# Expected: 405 — Allow: GET, PUT, DELETE
+POST {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{}
+
+### 13 — Revive the deleted store via update (data recovery is legal)
+# Expected: 200 — status flips back to ACTIVE; no terminality enforced
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "status": "ACTIVE"
+}

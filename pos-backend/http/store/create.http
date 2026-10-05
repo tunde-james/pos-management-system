@@ -1,0 +1,242 @@
+# =============================================================================
+# Store — CREATE requests (VS Code REST Client) — POST /api/v1/stores (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite for these endpoints: StoreApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
+#   - Re-running this file: request 2 returns 409 (brand/email persist) — harmless.
+#   - Expected codes: 201 created, 400 invalid payload/ghost admin/bad storeType,
+#     401 no/invalid token, 403 non-admin, 409 duplicate brand or contact email.
+# =============================================================================
+
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona, capture both tokens
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Create a store, self-assigned admin
+# Expected: 201 — publicId, status ACTIVE, phone normalized to +2348012345678
+# @name createOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Lekki Flagship",
+  "description": "The chain's main store",
+  "storeType": "FLAGSHIP",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "1 Admiralty Way, Lekki",
+    "phone": "08012345678",
+    "email": "lekki-flagship@devtunde.com"
+  }
+}
+
+### 3 — No Authorization header
+# Expected: 401
+POST {{storeUrl}}
+Content-Type: application/json
+
+{
+  "brand": "No Token Branch",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Somewhere",
+    "phone": "08012345678",
+    "email": "no-token-branch@devtunde.com"
+  }
+}
+
+### 4 — Garbage token
+# Expected: 401
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "brand": "Garbage Token Branch",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Somewhere",
+    "phone": "08012345678",
+    "email": "garbage-token-branch@devtunde.com"
+  }
+}
+
+### 5 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234567"
+}
+
+### 6 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 7 — Create as a regular user
+# Expected: 403 — store creation is admin-only (@PreAuthorize)
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "brand": "Nope Store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{regularLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Somewhere",
+    "phone": "08012345678",
+    "email": "nope-store@devtunde.com"
+  }
+}
+
+### 8 — Duplicate brand (Lekki Flagship from request 2)
+# Expected: 409 — "Store already exists"
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Lekki Flagship",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Different address",
+    "phone": "08012345678",
+    "email": "duplicate-brand@devtunde.com"
+  }
+}
+
+### 9 — Duplicate contact email (lekki-flagship@devtunde.com from request 2)
+# Expected: 409 — uniqueness is per-field, isolated (brand is different here)
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Duplicate Email Store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Somewhere else",
+    "phone": "08012345678",
+    "email": "lekki-flagship@devtunde.com"
+  }
+}
+
+### 10 — Ghost admin: storeAdminPublicId that does not resolve
+# Expected: 400 — "Store admin not found" (payload problem, NOT a 404)
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Ghost Admin Store",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "11111111-1111-1111-1111-111111111111",
+  "contact": {
+    "address": "Nowhere Street",
+    "phone": "08012345678",
+    "email": "ghost-admin@devtunde.com"
+  }
+}
+
+### 11 — Blank brand
+# Expected: 400 — "Brand is required"
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Somewhere",
+    "phone": "08012345678",
+    "email": "blank-brand@devtunde.com"
+  }
+}
+
+### 12 — Unknown storeType (not a legal enum value)
+# Expected: 400, never 500 — the enum rejects it at deserialization
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Mall of Nonsense",
+  "storeType": "MALL",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Nowhere Street",
+    "phone": "08012345678",
+    "email": "bad-type@devtunde.com"
+  }
+}
+
+### 13 — Garbage phone
+# Expected: 400 — @ValidPhoneNumber rejects it before the service runs
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Bad Phone Store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Somewhere",
+    "phone": "not-a-phone",
+    "email": "bad-phone@devtunde.com"
+  }
+}
+
+### 14 — Missing contact object entirely
+# Expected: 400 — "Contact details are required"
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "No Contact Store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}"
+}
