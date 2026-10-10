@@ -136,6 +136,11 @@ public class StoreServiceImpl implements StoreService {
     }
 
     @Override
+    public boolean isStoreAdmin(UUID userPublicId) {
+        return storeRepository.findByStoreAdminId(userPublicId).isPresent();
+    }
+
+    @Override
     public void deleteStore(UUID publicId) {
 
         Store store = storeRepository.findByPublicId(publicId).orElseThrow(StoreNotFoundException::new);
