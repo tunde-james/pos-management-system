@@ -14,8 +14,10 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import org.slf4j.Logger;
@@ -86,6 +88,28 @@ public class GlobalExceptionHandler {
                 ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Request body is missing or malformed.");
         problemDetail.setType(URI.create(errorProperties.baseUrl() + "/malformed-body"));
         problemDetail.setTitle("Malformed request body");
+        return ResponseEntity.badRequest().body(problemDetail);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ProblemDetail> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Parameter '" + ex.getName() + "' has an invalid format.");
+
+        problemDetail.setType(URI.create(errorProperties.baseUrl() + "/invalid-parameter"));
+        problemDetail.setTitle("Invalid parameter");
+        return ResponseEntity.badRequest().body(problemDetail);
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ProblemDetail> handleMissingParam(MissingServletRequestParameterException ex) {
+
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Required parameter '" + ex.getParameterName() + "' is missing.");
+
+        problemDetail.setType(URI.create(errorProperties.baseUrl() + "/invalid-parameter"));
+        problemDetail.setTitle("Invalid parameter");
         return ResponseEntity.badRequest().body(problemDetail);
     }
 

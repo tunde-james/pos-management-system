@@ -1,0 +1,182 @@
+# =============================================================================
+# Product — CATEGORY CREATE probes — POST /api/v1/categories (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite for these endpoints: ProductApiTests (src/test/java).
+#   - Access tokens expire after 15 MINUTES — re-send the setup requests
+#     from the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: setup categories are minted fresh via {{$timestamp}}
+#     each run. The duplicate probe (13-14) uses a FIXED name on purpose: its
+#     conflict target persists across runs, so request 14 409s every time.
+#   - Category names are UNIQUE (V6): a taken name returns 409.
+#   - Expected codes: 201 created, 400 invalid/missing name, 401 no/garbage
+#     token, 403 non-admin caller, 409 duplicate name.
+# =============================================================================
+
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: signup Devtunde (the admin)
+# Expected: 201
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Admin Devtunde",
+  "email": "admin@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031230044"
+}
+
+### 2 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 3 — Create a category (fresh name every run)
+# Expected: 201 — publicId, name, createdAt, updatedAt
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Beverages {{$timestamp}}"
+}
+
+### 4 — No Authorization header
+# Expected: 401
+POST {{categoryUrl}}
+Content-Type: application/json
+
+{
+  "name": "No Token Category"
+}
+
+### 5 — Garbage token
+# Expected: 401
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "name": "Garbage Token Category"
+}
+
+### 6 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probie Regular",
+  "email": "probe.regular@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110001"
+}
+
+### 7 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "probe.regular@devtunde.com",
+  "password": "Password123!"
+}
+
+### 8 — Create as a regular user
+# Expected: 403 — category CUD is chain-admin-only (@PreAuthorize)
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "name": "Nope Category"
+}
+
+### 9 — Blank name
+# Expected: 400 — field error on "name" (@NotBlank)
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": ""
+}
+
+### 10 — Name over 100 characters
+# Expected: 400 — field error on "name" (@Size max 100)
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "This category name is far too long to be legal because the validation layer caps names at one hundred characters exactly"
+}
+
+### 11 — Missing name field entirely
+# Expected: 400 — @NotBlank rejects null
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{}
+
+### 12 — Malformed JSON
+# Expected: 400 — "Malformed request body" (HttpMessageNotReadable)
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{ "name": "Unclosed
+
+### 13 — Second category (categories are a chain vocabulary, so several exist)
+# Expected: 201
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Snacks {{$timestamp}}"
+}
+
+### 14 — Setup: create the duplicate-probe's FIRST copy
+# Expected: 201 on first run; 409 on every later run (name persists) —
+# harmless either way: NOTHING chains off this request's capture
+# @name clashVocabulary
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Clash Vocabulary"
+}
+
+### 14 — Create the SAME name again — the uniqueness contract
+# Expected: 409 — "Category already exists" (V6 + service check)
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Clash Vocabulary"
+}

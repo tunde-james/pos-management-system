@@ -1,0 +1,124 @@
+# =============================================================================
+# Product — CATEGORY LIST probes — GET /api/v1/categories (ADMIN or any store admin)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use. This file walks one persona from
+#     "plain user" to "store admin" to prove the isStoreAdmin read gate.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: the reader persona, her store, and the vocabulary
+#     category are all minted fresh via {{$timestamp}} each run — one store
+#     per admin is a committed rule, so the reader must be fresh like her
+#     store (she seeds it at request 8).
+#   - Expected codes: 200 list, 401 no/garbage token, 403 plain user.
+# =============================================================================
+
+@categoryUrl = http://localhost:4000/api/v1/categories
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — List categories as the chain admin
+# Expected: 200 — array of {publicId, name, createdAt, updatedAt}
+GET {{categoryUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 3 — No Authorization header
+# Expected: 401
+GET {{categoryUrl}}
+
+### 4 — Garbage token
+# Expected: 401
+GET {{categoryUrl}}
+Authorization: Bearer not-a-real-jwt
+
+### 5 — Setup: signup the reader persona (fresh every run, starts as a plain user)
+# Expected: 201 — a brand-new persona each run
+# @name readerSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Catalog Reader",
+  "email": "probe-reader-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110002"
+}
+
+### 6 — Setup: login the reader persona
+# Expected: 200
+# @name readerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{readerSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — List as a plain user (no store, not admin)
+# Expected: 403 — the read gate is chain admin OR any store admin
+GET {{categoryUrl}}
+Authorization: Bearer {{readerLogin.response.body.accessToken}}
+
+### 8 — Setup: admin creates a store, making the reader a STORE ADMIN
+# Expected: 201
+# @name readerStore
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Reader Home Store {{$timestamp}}",
+  "description": "Store for the category reader persona",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{readerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "1 Reader Street, Lagos",
+    "phone": "08012345678",
+    "email": "reader-home-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 9 — List again — same person, now a store admin
+# Expected: 200 — the isStoreAdmin gate opens: role is still ROLE_USER,
+# but "administers any store" is a data fact, not a role
+GET {{categoryUrl}}
+Authorization: Bearer {{readerLogin.response.body.accessToken}}
+
+### 10 — Setup: admin adds a fresh category for the reader to find
+# Expected: 201
+# @name readerVocabulary
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Reader Vocabulary {{$timestamp}}"
+}
+
+### 11 — Reader lists again — eyeball the minted "Reader Vocabulary …" name
+# Expected: 200
+GET {{categoryUrl}}
+Authorization: Bearer {{readerLogin.response.body.accessToken}}

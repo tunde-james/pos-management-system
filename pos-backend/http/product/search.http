@@ -1,0 +1,218 @@
+# =============================================================================
+# Product — SEARCH probes — GET /api/v1/products/store/{storeId}/search?keyword=
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — requests 6-11 chain on earlier captures.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: category and stores are minted fresh via
+#     {{$timestamp}} each run; the SKUs reuse their masters in fresh stores.
+#   - Search matches name OR sku, case-insensitive, contains-style.
+#   - Expected codes: 200 results (possibly []), 400 missing keyword,
+#     401 no token, 403 plain user
+#     or foreign store admin, 404 unknown store.
+# =============================================================================
+
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Searchables {{$timestamp}}"
+}
+
+### 3 — Setup: signup the store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name searchSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Search Manager",
+  "email": "probe-search-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110015"
+}
+
+### 4 — Setup: login the store manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{searchSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 5 — Setup: admin creates the store (fresh every run)
+# Expected: 201
+# @name storeOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Search Store {{$timestamp}}",
+  "description": "Store for search probes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "5 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-search-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 6 — Setup: list three products to search over
+# Expected: 201
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Amstel Malta",
+  "sku": "PROBE-AMSTEL-001",
+  "brand": "Amstel",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 500.00,
+  "sellingPrice": 400.00
+}
+
+### 7 — Setup: second product
+# Expected: 201
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Gulder",
+  "sku": "PROBE-GULDER-001",
+  "brand": "Gulder",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 800.00,
+  "sellingPrice": 700.00
+}
+
+### 8 — Setup: third product
+# Expected: 201
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Peak Milk",
+  "sku": "PROBE-PEAK-001",
+  "brand": "Peak",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 350.00,
+  "sellingPrice": 320.00
+}
+
+### 9 — Search by NAME fragment, lowercase against a capitalized name
+# Expected: 200 — one hit: "Amstel Malta" (case-insensitive contains)
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=amstel
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 10 — Search by exact SKU
+# Expected: 200 — one hit: "Peak Milk"
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=PROBE-PEAK-001
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 11 — Search that matches nothing
+# Expected: 200 — empty array []
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=zzznomatch
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 12 — No Authorization header
+# Expected: 401
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=amstel
+
+### 13 — Setup: signup a prowler persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Prowler Manager",
+  "email": "prowler.manager@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110016"
+}
+
+### 14 — Setup: login the prowler
+# Expected: 200
+# @name prowlerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "prowler.manager@devtunde.com",
+  "password": "Password123!"
+}
+
+### 15 — Prowler searches (plain user — no store, not admin)
+# Expected: 403 — search is a staff surface with the same read predicate
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=amstel
+Authorization: Bearer {{prowlerLogin.response.body.accessToken}}
+
+### 16 — Setup: admin gives the prowler her own store (fresh every run)
+# Expected: 201
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Prowl Store {{$timestamp}}",
+  "description": "The prowler's own store",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{prowlerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "6 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-prowl-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 17 — Prowler searches again — foreign store admin, still 403
+# Expected: 403
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=amstel
+Authorization: Bearer {{prowlerLogin.response.body.accessToken}}
+
+### 18 — Missing keyword parameter
+# Expected: 400 — "Required parameter 'keyword' is missing."
+# (Formerly a 500 wart: the missing-param exception fell through to the
+# catch-all until the GlobalExceptionHandler learned this class — closed
+# with ticket 0009.)
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search
+Authorization: Bearer {{managerLogin.response.body.accessToken}}

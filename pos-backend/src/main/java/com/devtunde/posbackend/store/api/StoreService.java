@@ -19,5 +19,7 @@ public interface StoreService {
 
     StoreApiResponse updateStore(UUID publicId, StoreUpdateRequest request);
 
+    boolean isStoreAdmin(UUID userPublicId);
+
     void deleteStore(UUID publicId);
 }
