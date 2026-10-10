@@ -17,6 +17,6 @@ public class ProductNotFoundException extends ProblemDetailException {
 
     @Override
     public String title() {
-        return "Prodct not found";
+        return "Product not found";
     }
 }
