@@ -1,0 +1,198 @@
+# =============================================================================
+# Product — MASTER UPDATE probes — PATCH /api/v1/products/{productPublicId} (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — requests 7-9 chain on request 6.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: category and store are minted fresh via
+#     {{$timestamp}} each run; the SKU reuses its master in the fresh store.
+#   - Master updates touch ITEM fields only — prices live on listings, and
+#     sku is structurally immutable (no setter, no update record component).
+#     An all-null patch is rejected (400 Empty patch) — a patch must
+#     change something.
+#   - Expected codes: 200 updated (ProductMasterResponse — NO price keys),
+#     400 oversized field or EMPTY PATCH, 401 no token, 403 store admin,
+#     404 unknown product.
+# =============================================================================
+
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Master Goods {{$timestamp}}"
+}
+
+### 3 — Setup: signup a store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name masterSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Master Manager",
+  "email": "probe-master-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110021"
+}
+
+### 4 — Setup: login the store manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{masterSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 5 — Setup: admin creates the store (fresh every run)
+# Expected: 201
+# @name storeOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Master Store {{$timestamp}}",
+  "description": "Store for master update probes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "10 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-master-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 6 — Setup: the manager lists the product whose master will be edited
+# Expected: 201
+# @name listOk
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Old Master Name",
+  "sku": "PROBE-MASTER-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Chain admin updates the MASTER name
+# Expected: 200 — name "New Master Name"; response is the CHAIN view:
+# NO mrp/sellingPrice keys at all (ProductMasterResponse)
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "New Master Name"
+}
+
+### 8 — Send sku in the body alongside a real field — sku silently dropped
+# Expected: 200 — sku is still PROBE-MASTER-001; brand became "NewBrand"
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "sku": "HIJACK-1",
+  "brand": "NewBrand"
+}
+
+### 9 — Send explicit nulls — ignored, brand stays "NewBrand"
+# Expected: 200 — nulls-ignored PATCH semantics (null ≠ change)
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": null
+}
+
+### 10 — Unknown product id
+# Expected: 404
+PATCH {{productUrl}}/99999999-9999-9999-9999-999999999999
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Ghost Item"
+}
+
+### 11 — No Authorization header
+# Expected: 401
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+
+{
+  "name": "No Token Name"
+}
+
+### 12 — A STORE ADMIN tries to edit master fields
+# Expected: 403 — chain data belongs to the core office (ROLE_ADMIN only);
+# store managers own listing prices, not the item itself
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Hijacked Name"
+}
+
+### 13 — Empty body — rejected: a patch must change something
+# Expected: 400 — "Empty patch" (all-null body is a client bug, surface it)
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{}
+
+### 14 — No body at all (missing request body)
+# Expected: 400 — "Malformed request body" (HttpMessageNotReadable)
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 15 — Name over 200 characters (a genuine 250+ char violation)
+# Expected: 400 — field error on "name" (@Size max 200)
+PATCH {{productUrl}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "This product name is deliberately and explicitly far too long to be legal under any reading of the validation contract because the validation layer caps names at two hundred characters exactly and this particular sentence has been engineered with absolutely no other purpose than to blow straight past that limit with room to spare"
+}

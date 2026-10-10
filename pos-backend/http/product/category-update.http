@@ -1,0 +1,179 @@
+# =============================================================================
+# Product — CATEGORY UPDATE probes — PATCH /api/v1/categories/{publicId} (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — request 3 chains on request 2's publicId.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: the renamed category is minted fresh via
+#     {{$timestamp}}. The collision target "Occupied Vocabulary" (requests
+#     14-15) is FIXED on purpose: it persists, so request 15 409s every run.
+#   - Expected codes: 200 renamed, 400 blank/missing/oversized name,
+#     401 no/garbage token, 403 non-admin, 404 unknown category id in path,
+#     409 renaming onto an existing name.
+# =============================================================================
+
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create the category to rename (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Old Category Name {{$timestamp}}"
+}
+
+### 3 — Rename it
+# Expected: 200 — name reflects the rename
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Renamed Category {{$timestamp}}"
+}
+
+### 4 — No Authorization header
+# Expected: 401
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+
+{
+  "name": "No Token Rename"
+}
+
+### 5 — Rename an unknown category id
+# Expected: 404 — path id rule: server-given id that resolves to nothing
+PATCH {{categoryUrl}}/99999999-9999-9999-9999-999999999999
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Ghost Rename"
+}
+
+### 6 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Rename Regular",
+  "email": "rename.regular@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110003"
+}
+
+### 7 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "rename.regular@devtunde.com",
+  "password": "Password123!"
+}
+
+### 8 — Rename as a regular user
+# Expected: 403 — rename is chain-admin-only (@PreAuthorize)
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "name": "Hijacked Category"
+}
+
+### 9 — Blank name
+# Expected: 400 — field error on "name"
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": ""
+}
+
+### 10 — Name over 100 characters
+# Expected: 400 — field error on "name" (@Size max 100)
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "This category name is far too long to be legal because the validation layer caps names at one hundred characters exactly"
+}
+
+### 11 — Empty body (missing name is rejected — renames must carry a name)
+# Expected: 400 — @NotBlank rejects null
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{}
+
+### 12 — Malformed JSON
+# Expected: 400 — "Malformed request body"
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{ "name": "Unclosed
+
+### 13 — Rename to the same value again (safe, idempotent for the catalog)
+# Expected: 200
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Renamed Category {{$timestamp}}"
+}
+
+### 14 — Setup: the collision target — a fixed name that persists across runs
+# Expected: 201 on first run; 409 on later runs — harmless either way:
+# NOTHING chains off this request's capture
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Occupied Vocabulary"
+}
+
+### 15 — Rename ONTO an existing name — the uniqueness contract
+# Expected: 409 — "Category already exists" (rename must not steal a name)
+PATCH {{categoryUrl}}/{{categoryOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Occupied Vocabulary"
+}

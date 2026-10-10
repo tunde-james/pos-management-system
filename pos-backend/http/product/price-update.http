@@ -1,0 +1,250 @@
+# =============================================================================
+# Product — LISTING PRICE UPDATE probes —
+# PATCH /api/v1/products/store/{storeId}/{productPublicId}
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — requests 7-9 chain on request 6.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: category and stores are minted fresh via
+#     {{$timestamp}} each run; the SKU reuses its master in the fresh store.
+#   - PATCH semantics: nulls are IGNORED — send one price, the other stays.
+#     But a patch carrying NOTHING is rejected (400 Empty patch).
+#   - Expected codes: 200 updated, 400 bad money or EMPTY PATCH, 401 no
+#     token, 403 foreign store admin, 404 unknown store or unlisted product.
+# =============================================================================
+
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Priced Goods {{$timestamp}}"
+}
+
+### 3 — Setup: signup the store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name priceMgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Price Manager",
+  "email": "probe-price-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110017"
+}
+
+### 4 — Setup: login the store manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{priceMgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 5 — Setup: admin creates the store (fresh every run)
+# Expected: 201
+# @name storeOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Price Store {{$timestamp}}",
+  "description": "Store for price update probes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "7 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-price-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 6 — Setup: list a product (mrp 15000.00 / selling 12000.00)
+# Expected: 201
+# @name listOk
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Price Change Cola",
+  "sku": "PROBE-PRICE-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Update BOTH prices
+# Expected: 200 — mrp 20000.00, sellingPrice 18000.00, name untouched
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "mrp": 20000.00,
+  "sellingPrice": 18000.00
+}
+
+### 8 — Update ONLY sellingPrice — mrp must stay 20000.00 (nulls ignored)
+# Expected: 200 — sellingPrice 9000.00, mrp 20000.00 untouched
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "sellingPrice": 9000.00
+}
+
+### 9 — Update ONLY the discount — prices untouched
+# Expected: 200 — discountPercentage 5.00, prices unchanged from request 8
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "discountPercentage": 5.00
+}
+
+### 10 — No Authorization header
+# Expected: 401
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+
+{
+  "sellingPrice": 1000.00
+}
+
+### 11 — Product this store does not list
+# Expected: 404 — the natural key (storeId, productPublicId) has no row
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/99999999-9999-9999-9999-999999999999
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "sellingPrice": 1000.00
+}
+
+### 12 — Unknown store id
+# Expected: 404
+PATCH {{productUrl}}/store/99999999-9999-9999-9999-999999999999/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "sellingPrice": 1000.00
+}
+
+### 13 — Setup: signup a rival persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Price Rival",
+  "email": "price.rival@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110018"
+}
+
+### 14 — Setup: login the rival
+# Expected: 200
+# @name rivalLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "price.rival@devtunde.com",
+  "password": "Password123!"
+}
+
+### 15 — Setup: admin gives the rival her own store (fresh every run)
+# Expected: 201
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Price Rival {{$timestamp}}",
+  "description": "The rival's own store",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{rivalLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "8 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-price-rival-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 16 — Foreign store admin tries to reprice MY listing
+# Expected: 403 — pricing is the owning store's authority
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{rivalLogin.response.body.accessToken}}
+
+{
+  "sellingPrice": 1000.00
+}
+
+### 17 — Negative mrp
+# Expected: 400 — field error on "mrp" (@Positive)
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "mrp": -1000.00
+}
+
+### 18 — Discount over 100
+# Expected: 400 — field error on "discountPercentage" (@DecimalMax 100.00)
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "discountPercentage": 150.00
+}
+
+### 19 — Empty body — rejected: a patch must change something
+# Expected: 400 — "Empty patch" (all-null body is a client bug, surface it)
+PATCH {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{}

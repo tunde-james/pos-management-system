@@ -1,0 +1,194 @@
+# =============================================================================
+# Product — CATALOG LIST probes — GET /api/v1/products/store/{storeId}
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — requests 6-9 chain on earlier captures.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: category and stores are minted fresh via
+#     {{$timestamp}} each run; the SKUs reuse their masters in fresh stores.
+#   - Expected codes: 200 catalog (possibly []), 401 no/garbage token,
+#     403 plain user or foreign store admin, 404 unknown store.
+# =============================================================================
+
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Drinks {{$timestamp}}"
+}
+
+### 3 — Setup: signup the store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name vicSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe List Manager",
+  "email": "probe-vic-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110013"
+}
+
+### 4 — Setup: login the store manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{vicSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 5 — Setup: admin creates the store (fresh every run)
+# Expected: 201
+# @name storeOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe List Store {{$timestamp}}",
+  "description": "Store for catalog list probes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "3 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-list-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 6 — Read the FRESH catalog (no listings yet)
+# Expected: 200 — empty array []
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 7 — Setup: list product A
+# Expected: 201
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Amstel Malta",
+  "sku": "PROBE-LIST-001",
+  "brand": "Amstel",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 500.00,
+  "sellingPrice": 400.00
+}
+
+### 8 — Setup: list product B
+# Expected: 201
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Gulder",
+  "sku": "PROBE-LIST-002",
+  "brand": "Gulder",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 800.00,
+  "sellingPrice": 700.00
+}
+
+### 9 — Read the catalog again — both items, each with prices + category ref
+# Expected: 200 — array with "Amstel Malta" and "Gulder"
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 10 — No Authorization header
+# Expected: 401
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}
+
+### 11 — Setup: signup a rival persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Rival Manager",
+  "email": "rival.manager@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110014"
+}
+
+### 12 — Setup: login the rival
+# Expected: 200
+# @name rivalLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "rival.manager@devtunde.com",
+  "password": "Password123!"
+}
+
+### 13 — Rival reads the catalog (plain user — no store yet, not admin)
+# Expected: 403 — reads share the write predicate (Q4)
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{rivalLogin.response.body.accessToken}}
+
+### 14 — Setup: admin gives the rival her OWN store (fresh every run)
+# Expected: 201
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Rival Store {{$timestamp}}",
+  "description": "The rival's own store",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{rivalLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "4 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-rival-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 15 — Rival reads again — now a FOREIGN STORE ADMIN, still 403
+# Expected: 403 — being a store admin somewhere is not enough;
+# it must be THIS store's admin (or the chain admin)
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{rivalLogin.response.body.accessToken}}
+
+### 16 — Unknown store id (even for the chain admin)
+# Expected: 404
+GET {{productUrl}}/store/99999999-9999-9999-9999-999999999999
+Authorization: Bearer {{adminLogin.response.body.accessToken}}

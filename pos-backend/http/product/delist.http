@@ -1,0 +1,187 @@
+# =============================================================================
+# Product — DELIST probes —
+# DELETE /api/v1/products/store/{storeId}/{productPublicId}
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — the re-list in request 10 proves the
+#     master SURVIVES delisting (Q6/Q10 doctrine).
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: category and store are minted fresh via
+#     {{$timestamp}} each run; the SKU re-lists into the fresh store (201).
+#   - Expected codes: 204 delisted, 401 no token, 403 non-owner,
+#     404 unknown store / unlisted product / already delisted.
+# =============================================================================
+
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Delist Goods {{$timestamp}}"
+}
+
+### 3 — Setup: signup the store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name delistSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Delist Manager",
+  "email": "probe-delist-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110019"
+}
+
+### 4 — Setup: login the store manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{delistSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 5 — Setup: admin creates the store (fresh every run)
+# Expected: 201
+# @name storeOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Delist Store {{$timestamp}}",
+  "description": "Store for delist probes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "9 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-delist-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 6 — Setup: list the product that will be delisted
+# Expected: 201
+# @name listOk
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Doomed Cola",
+  "sku": "PROBE-DELIST-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Delist it
+# Expected: 204 — the listing row is hard-deleted; the master survives
+DELETE {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 8 — Delist it AGAIN
+# Expected: 404 — honest 404: the row is gone (no soft-delete idempotence)
+DELETE {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 9 — Prove it left the catalog: search its sku
+# Expected: 200 — empty array []
+GET {{productUrl}}/store/{{storeOk.response.body.publicId}}/search?keyword=PROBE-DELIST-001
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 10 — Re-list the same sku in the same store — master is reused, not rebuilt
+# Expected: 201 — SAME productPublicId as request 6's capture;
+# a listing is state; re-listing just re-inserts the state row
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Doomed Cola",
+  "sku": "PROBE-DELIST-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 11 — No Authorization header
+# Expected: 401
+DELETE {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+
+### 12 — Product this store does not list
+# Expected: 404
+DELETE {{productUrl}}/store/{{storeOk.response.body.publicId}}/99999999-9999-9999-9999-999999999999
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+### 13 — Unknown store id
+# Expected: 404
+DELETE {{productUrl}}/store/99999999-9999-9999-9999-999999999999/{{listOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 14 — Setup: signup an onlooker persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Delist Onlooker",
+  "email": "delist.onlooker@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110020"
+}
+
+### 15 — Setup: login the onlooker
+# Expected: 200
+# @name onlookerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "delist.onlooker@devtunde.com",
+  "password": "Password123!"
+}
+
+### 16 — Onlooker (plain user) tries to delist
+# Expected: 403
+DELETE {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Authorization: Bearer {{onlookerLogin.response.body.accessToken}}
+
+### 17 — Delist the re-listed row (cleanup + repeat proof)
+# Expected: 204
+DELETE {{productUrl}}/store/{{storeOk.response.body.publicId}}/{{listOk.response.body.publicId}}
+Authorization: Bearer {{managerLogin.response.body.accessToken}}

@@ -1,0 +1,174 @@
+# =============================================================================
+# Product — CATEGORY DELETE probes — DELETE /api/v1/categories/{publicId} (ADMIN)
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — the in-use guard (409) needs the
+#     product listing from requests 13-15.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: categories and the guard store are minted fresh
+#     via {{$timestamp}} each run; the guard SKU reuses its master (201).
+#   - Expected codes: 204 deleted, 401 no token, 403 non-admin,
+#     404 unknown/already-deleted id, 409 category still referenced.
+# =============================================================================
+
+@categoryUrl = http://localhost:4000/api/v1/categories
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category to delete (fresh every run)
+# Expected: 201
+# @name doomedCategory
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Doomed Category {{$timestamp}}"
+}
+
+### 3 — Delete it (no products reference it)
+# Expected: 204
+DELETE {{categoryUrl}}/{{doomedCategory.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 4 — Delete it AGAIN — honest 404, the row is gone
+# Expected: 404 — catalog rows hard-delete; no soft-delete idempotence here
+DELETE {{categoryUrl}}/{{doomedCategory.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 5 — Delete an unknown category id
+# Expected: 404
+DELETE {{categoryUrl}}/99999999-9999-9999-9999-999999999999
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 6 — No Authorization header
+# Expected: 401
+DELETE {{categoryUrl}}/99999999-9999-9999-9999-999999999999
+
+### 7 — Setup: signup a regular persona
+# Expected: 201 (409 if she already exists — either way the account exists)
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Delete Regular",
+  "email": "delete.regular@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110004"
+}
+
+### 8 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "delete.regular@devtunde.com",
+  "password": "Password123!"
+}
+
+### 9 — Delete as a regular user
+# Expected: 403 — category delete is chain-admin-only (@PreAuthorize)
+DELETE {{categoryUrl}}/99999999-9999-9999-9999-999999999999
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 10 — Setup: create the category the next product will reference
+# Expected: 201
+# @name guardedCategory
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Guarded Category {{$timestamp}}"
+}
+
+### 11 — Setup: signup a store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name guardSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Guard Manager",
+  "email": "probe-guard-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110005"
+}
+
+### 12 — Setup: login the guard manager
+# Expected: 200
+# @name guardManagerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{guardSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 13 — Setup: admin creates the guard manager's store (fresh every run)
+# Expected: 201
+# @name guardStore
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Guard Store {{$timestamp}}",
+  "description": "Store guarding its category",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{guardManagerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "1 Guard Street, Lagos",
+    "phone": "08012345678",
+    "email": "guard-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 14 — Setup: the manager lists a product referencing the guarded category
+# Expected: 201 (fresh store each run; the master is reused on re-runs)
+POST {{productUrl}}/store/{{guardStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{guardManagerLogin.response.body.accessToken}}
+
+{
+  "name": "Guarded Cola",
+  "sku": "PROBE-GUARD-001",
+  "description": "Keeps the category referenced",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{guardedCategory.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 15 — Delete the guarded category
+# Expected: 409 — "Category in use" — the master still references it, no cascade
+DELETE {{categoryUrl}}/{{guardedCategory.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}

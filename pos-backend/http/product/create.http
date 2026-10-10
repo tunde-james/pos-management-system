@@ -1,0 +1,302 @@
+# =============================================================================
+# Product — CREATE LISTING probes — POST /api/v1/products/store/{storeId}
+# =============================================================================
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request below.
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - Run top-to-bottom on first use — requests 6-19 chain on earlier captures.
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite: ProductApiTests (src/test/java).
+#   - Tokens expire after 15 MINUTES — re-send the setup requests from
+#     the top (they mint fresh captures anyway), then continue.
+#   - Response captures are SESSION-SCOPED: closing/reopening this file or VS Code clears them. If a request errors with "No value is resolved" or the URL carries raw template text, re-send the setup requests from the top.
+#   - Re-running is SAFE: the category, BOTH stores, and BOTH store
+#     managers are minted fresh via {{$timestamp}} each run — one store per
+#     admin is a committed rule, so seeding a store needs a fresh admin.
+#     SKUs stay fixed on purpose — request 17 proves the master-reuse
+#     contract, and a fresh store lets the same SKU list again without
+#     a conflict. The PROBE-COLA-001 MASTER persists across runs: once
+#     created by the first-ever run, its fields (including the category
+#     ref) come from THAT run — re-runs reuse it, they don't rewrite it.
+#   - Q6 signature lives in request 17: a SECOND store listing the same SKU
+#     gets the SAME productPublicId and the MASTER's name — not the payload's.
+#   - Expected codes: 201 listed, 400 blank name/bad money/ghost category,
+#     401 no/garbage token, 403 foreign store admin, 404 unknown store,
+#     409 duplicate listing in one store.
+# =============================================================================
+
+@productUrl = http://localhost:4000/api/v1/products
+@storeUrl = http://localhost:4000/api/v1/stores
+@categoryUrl = http://localhost:4000/api/v1/categories
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: create a category (fresh every run)
+# Expected: 201
+# @name categoryOk
+POST {{categoryUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Beverages {{$timestamp}}"
+}
+
+### 3 — Setup: signup the store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name sellerSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Seller",
+  "email": "probe-seller-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110011"
+}
+
+### 4 — Setup: login the store manager
+# Expected: 200
+# @name managerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{sellerSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 5 — Setup: admin creates the store, manager assigned (fresh every run)
+# Expected: 201
+# @name storeOk
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Catalog Store {{$timestamp}}",
+  "description": "Store for product create probes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "1 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-catalog-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 6 — The manager lists a product: the happy path
+# Expected: 201 — publicId (MASTER's), prices, nested category ref,
+# discountPercentage defaults to 0.00
+# @name listOk
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Original Cola 50cl",
+  "sku": "PROBE-COLA-001",
+  "description": "Test item for the catalog",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — No Authorization header
+# Expected: 401
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+
+{
+  "name": "No Token Cola",
+  "sku": "PROBE-NOTOKEN-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 8 — Garbage token
+# Expected: 401
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "name": "Garbage Token Cola",
+  "sku": "PROBE-GARBAGE-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 9 — Blank name
+# Expected: 400 — field error on "name"
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "   ",
+  "sku": "PROBE-BLANK-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Negative mrp
+# Expected: 400 — field error on "mrp" (@Positive)
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Cheap Cola",
+  "sku": "PROBE-NEG-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": -15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 11 — Missing prices entirely
+# Expected: 400 — @NotNull on mrp and sellingPrice
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Priceless Cola",
+  "sku": "PROBE-NOBUX-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}"
+}
+
+### 12 — Ghost categoryPublicId in the payload
+# Expected: 400 — "Category not found" — payload ids are 400s, not 404s
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Uncategorized Cola",
+  "sku": "PROBE-GHOSTCAT-001",
+  "categoryPublicId": "11111111-1111-1111-1111-111111111111",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 13 — Duplicate listing: same store, same sku (PROBE-COLA-001 from request 6)
+# Expected: 409 — "Product already listed"
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+
+{
+  "name": "Once Only Cola",
+  "sku": "PROBE-COLA-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 14 — Setup: signup a SECOND store manager persona (fresh every run)
+# Expected: 201 — a brand-new persona each run
+# @name sellerBSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Seller B",
+  "email": "probe-seller-b-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031110012"
+}
+
+### 15 — Setup: login the second manager
+# Expected: 200
+# @name sellerBLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{sellerBSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 16 — Setup: admin creates the second store (fresh every run)
+# Expected: 201
+# @name reuseStore
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Reuse Store {{$timestamp}}",
+  "description": "Second store for the master-reuse probe",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{sellerBLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "2 Probe Street, Lagos",
+    "phone": "08012345678",
+    "email": "probe-reuse-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 17 — Second store lists the SAME sku with a DIFFERENT name (Q6 signature)
+# Expected: 201 — publicId EQUALS {{listOk}}'s (one master, two listings),
+# and name is "Original Cola 50cl" — the MASTER's name wins, not the payload's
+POST {{productUrl}}/store/{{reuseStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{sellerBLogin.response.body.accessToken}}
+
+{
+  "name": "Sneaky Renamed Cola",
+  "sku": "PROBE-COLA-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 16000.00,
+  "sellingPrice": 13000.00
+}
+
+### 18 — Foreign store admin lists into store 1
+# Expected: 403 — the second seller does not administer Probe Catalog Store
+POST {{productUrl}}/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{sellerBLogin.response.body.accessToken}}
+
+{
+  "name": "Foreign Cola",
+  "sku": "PROBE-FOREIGN-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 19 — Unknown store id in the path (even for the chain admin)
+# Expected: 404 — store lookup runs before the permission check
+POST {{productUrl}}/store/99999999-9999-9999-9999-999999999999
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Ghost Store Cola",
+  "sku": "PROBE-GHOSTSTORE-001",
+  "categoryPublicId": "{{categoryOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
