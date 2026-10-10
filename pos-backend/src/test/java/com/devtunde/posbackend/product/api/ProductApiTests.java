@@ -823,4 +823,49 @@ class ProductApiTests extends AbstractIntegrationTest {
                         .header("Authorization", "Bearer " + store.managerToken))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    @DisplayName("A blank master name in the PATCH returns 400 — null means no change, blank is damage")
+    void masterUpdateBlankNameReturns400() throws Exception {
+        String adminToken = adminToken();
+        String categoryPublicId = createCategoryAsAdmin("Blank Name Category");
+        ManagedStore store = seedStore("Blank Name Master Store");
+        String productPublicId = listProductAs(store, categoryPublicId, "Named Item", uniqueSku());
+
+        mockMvc.perform(patch("/api/v1/products/" + productPublicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \" \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    @Test
+    @DisplayName("Catalog operations on a deleted store return 404 — dead stores don't trade")
+    void createProductInDeletedStoreReturns404() throws Exception {
+        String categoryPublicId = createCategoryAsAdmin("Deleted Store Category");
+        ManagedStore store = seedStore("Doomed Deleted Store");
+
+        mockMvc.perform(delete("/api/v1/stores/" + store.storeId).header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/products/store/" + store.storeId)
+                        .header("Authorization", "Bearer " + store.managerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                                productBody("Ghost Store Cola", uniqueSku(), categoryPublicId, "15000.00", "12000.00")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("An admin whose only store is deleted loses the category read gate")
+    void deletedStoreAdminLosesCategoryReadGate() throws Exception {
+        ManagedStore store = seedStore("Deleted Gate Store");
+
+        mockMvc.perform(delete("/api/v1/stores/" + store.storeId).header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/categories").header("Authorization", "Bearer " + store.managerToken))
+                .andExpect(status().isForbidden());
+    }
 }

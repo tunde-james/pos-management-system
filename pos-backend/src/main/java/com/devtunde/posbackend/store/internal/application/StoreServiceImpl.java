@@ -137,7 +137,10 @@ public class StoreServiceImpl implements StoreService {
 
     @Override
     public boolean isStoreAdmin(UUID userPublicId) {
-        return storeRepository.findByStoreAdminId(userPublicId).isPresent();
+        return storeRepository
+                .findByStoreAdminId(userPublicId)
+                .filter(store -> store.getStatus() == StoreStatus.ACTIVE)
+                .isPresent();
     }
 
     @Override

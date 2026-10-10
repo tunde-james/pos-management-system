@@ -7,6 +7,11 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+ import
+ com.devtunde.posbackend.store.api.StoreStatus;
+   import
+ com.devtunde.posbackend.store.api.exception.StoreNotFoundException;
+
 import com.devtunde.posbackend.auth.api.UserAccountService;
 import com.devtunde.posbackend.auth.api.UserRole;
 import com.devtunde.posbackend.auth.api.dto.UserViewResponse;
@@ -143,6 +148,10 @@ public class ProductServiceImpl implements ProductService {
     private StoreApiResponse requireStore(UUID storeId) {
 
         StoreApiResponse store = storeService.getStoreByPublicId(storeId);
+
+        if (store.status() != StoreStatus.ACTIVE) {
+            throw new StoreNotFoundException();
+        }
 
         UserViewResponse currentUser = userAccountService.currentUser();
 
