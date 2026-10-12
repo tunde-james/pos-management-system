@@ -1,25 +1,38 @@
 # =============================================================================
 # Store — UPDATE requests (VS Code REST Client) — PUT /api/v1/stores/{id} (ADMIN)
 # =============================================================================
-# Semantics (ticket 0007, Q6): PARTIAL update — absent fields are LEFT
-# UNCHANGED (nulls ignored). Present-but-empty strings are honored. When
-# contact IS present it must be complete (replaced as a whole unit).
+# Semantics: PARTIAL update — absent fields are LEFT UNCHANGED (nulls
+# ignored). Present-but-empty strings are honored. When contact IS present
+# it must be complete (replaced as a whole unit).
+#
+# Rules since ticket 0010:
+#   - PUT on a CLOSED store → 404 (dead stores are immutable).
+#   - PUT cannot set status to CLOSED → 400 (closing is DELETE's job; DELETE
+#     owns the seat-release and the audit copy — one door to close).
+#   - Other statuses via PUT stay legal (BLOCKED = temporarily not trading,
+#     still visible and maintainable).
 #
 # How to run:
 #   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
-#   2. Click the "Send Request" CodeLens above any request below.
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
 #
-# Prerequisites: an admin persona (see http/store/create.http header for the
-# SQL promotion one-liner).
+# Prerequisites: the admin persona (see http/store/delete.http header for
+# the SQL promotion one-liner).
 #
 # Notes:
-#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
-#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite for these endpoints: StoreApiTests (src/test/java).
+#   - Re-runnable: manager personas, brands and contact emails are minted
+#     fresh each run with {{$timestamp}} — no 409 collisions with prior runs.
 #   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
-#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
-#   - Re-running: request 2 returns 409 (brand persists) — harmless.
-#   - Expected codes: 200 updated, 400 ghost admin/bad storeType/incomplete
-#     contact, 401 no/invalid token, 403 non-admin, 404 unknown store id.
+#     re-send the SETUP requests from the top (they mint and re-capture).
+#   - REST Client captures die on file/VS Code reopen. If you see raw {{...}}
+#     template text being sent or sudden 500s, re-send the setup requests
+#     from the top — never continue on a dead capture.
+#   - Expected codes: 200 updated, 400 ghost admin/bad storeType/CLOSED via
+#     PUT, 401 no/invalid token, 403 non-admin, 404 unknown or closed store,
+#     204 close, 405 wrong method.
 # =============================================================================
 
 @storeUrl = http://localhost:4000/api/v1/stores
@@ -36,7 +49,31 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 2 — Setup: create a store to update
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name sellerSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Updatable Manager",
+  "email": "probe-update-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234582"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name sellerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{sellerSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create a store to update (minted brand)
 # Expected: 201
 # @name createStore
 POST {{storeUrl}}
@@ -44,28 +81,28 @@ Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {
-  "brand": "Updatable Store",
+  "brand": "Updatable Store {{$timestamp}}",
   "description": "Before the update",
   "storeType": "BRANCH",
-  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "storeAdminPublicId": "{{sellerLogin.response.body.user.publicId}}",
   "contact": {
     "address": "12 Market Road, Lagos",
     "phone": "08012345678",
-    "email": "updatable-store@devtunde.com"
+    "email": "updatable-{{$timestamp}}@devtunde.com"
   }
 }
 
-### 3 — Update the brand ONLY
+### 5 — Update the brand ONLY
 # Expected: 200 — brand changed; description/storeType/status/contact untouched
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {
-  "brand": "Rebranded Store"
+  "brand": "Rebranded Store {{$timestamp}}"
 }
 
-### 4 — Update the description only
+### 6 — Update the description only
 # Expected: 200
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
@@ -75,8 +112,9 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
   "description": "After the update"
 }
 
-### 5 — Block the store via status
-# Expected: 200 — status BLOCKED (temporarily closed; revivable)
+### 7 — Block the store via status
+# Expected: 200 — status BLOCKED (alive-but-not-trading: still visible and
+# still maintainable; the catalog's trading gate is a separate rule)
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
@@ -85,46 +123,44 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
   "status": "BLOCKED"
 }
 
-### 6 — Update the contact (must be complete — replaced as a unit)
-# Expected: 200 — address, phone and email all replaced
+### 8 — Try to CLOSE the store via PUT
+# Expected: 400 — "Store closure not permitted". Closing has exactly one
+# door: DELETE /api/v1/stores/{id} (it releases the admin's seat and fills
+# the audit column — PUT would silently skip both)
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {
-  "contact": {
-    "address": "45 New Address, Ikeja",
-    "phone": "08087654321",
-    "email": "updatable-store@devtunde.com"
-  }
+  "status": "CLOSED"
 }
 
-### 7 — Setup: signup a second persona to reassign to
-# Expected: 201 (409 if he already exists — either way the account exists)
+### 9 — Setup: signup a reassign target (minted fresh each run)
+# Expected: 201
 # @name secondSignup
 POST {{authUrl}}/signup
 Content-Type: application/json
 
 {
-  "fullName": "Chidi Second",
-  "email": "chidi.second@devtunde.com",
+  "fullName": "Reassign Target",
+  "email": "probe-reassign-{{$timestamp}}@devtunde.com",
   "password": "Password123!",
-  "phone": "+2348031234572"
+  "phone": "+2348031234583"
 }
 
-### 8 — Setup: login the second persona
+### 10 — Setup: login the reassign target
 # Expected: 200
 # @name secondLogin
 POST {{authUrl}}/login
 Content-Type: application/json
 
 {
-  "email": "chidi.second@devtunde.com",
+  "email": "{{secondSignup.response.body.user.email}}",
   "password": "Password123!"
 }
 
-### 9 — Reassign the store admin
-# Expected: 200 — storeAdminPublicId is now Chidi's
+### 11 — Reassign the store admin
+# Expected: 200 — storeAdminPublicId is now the target's
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
@@ -133,7 +169,7 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
   "storeAdminPublicId": "{{secondLogin.response.body.user.publicId}}"
 }
 
-### 10 — Reassign to a ghost admin
+### 12 — Reassign to a ghost admin
 # Expected: 400 — "Store admin not found" (payload problem, NOT a 404)
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
@@ -143,7 +179,7 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
   "storeAdminPublicId": "11111111-1111-1111-1111-111111111111"
 }
 
-### 11 — Unknown store id
+### 13 — Unknown store id
 # Expected: 404 — "Store not found"
 PUT {{storeUrl}}/99999999-9999-9999-9999-999999999999
 Content-Type: application/json
@@ -153,7 +189,7 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
   "brand": "No Such Store"
 }
 
-### 12 — No Authorization header
+### 14 — No Authorization header
 # Expected: 401
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
@@ -162,17 +198,41 @@ Content-Type: application/json
   "brand": "Tokenless Update"
 }
 
-### 13 — Update as a regular user
+### 15 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 16 — Setup: login the regular persona
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 17 — Update as a regular user
 # Expected: 403 — updates are admin-only
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
-Authorization: Bearer {{secondLogin.response.body.accessToken}}
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
 
 {
   "brand": "Regular User Update"
 }
 
-### 14 — Unknown storeType in the body
+### 18 — Unknown storeType in the body
 # Expected: 400, never 500 — the enum rejects it at deserialization
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
@@ -182,10 +242,25 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
   "storeType": "MALL"
 }
 
-### 15 — Empty body is a legal no-op
+### 19 — Empty body is a legal no-op
 # Expected: 200 — store returned unchanged (all-null update, nulls ignored)
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {}
+
+### 20 — Close the store (the ONE legal closing door)
+# Expected: 204 — status → CLOSED; the admin's seat is released
+DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 21 — Update the CLOSED store
+# Expected: 404 — dead stores are immutable; even the admin gets honest-404
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "description": "Necromancy attempt"
+}

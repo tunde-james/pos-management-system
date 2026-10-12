@@ -1,28 +1,35 @@
 # =============================================================================
-# Store — DELETE requests (VS Code REST Client) — DELETE /api/v1/stores/{id} (ADMIN)
+# Store — DELETE (close) requests (VS Code REST Client) — DELETE /api/v1/stores/{id} (ADMIN)
 # =============================================================================
-# Semantics (ticket 0007, Q8): DELETE is SOFT — it flips status to DELETED and
-# returns 204. The row is NEVER removed (history keeps a valid reference).
-# BLOCKED (temporarily closed) and DELETED (gone) are different states.
-# Deleting twice is idempotent (both 204). Revival via update is legal — no
-# terminality is enforced.
+# Semantics (ticket 0010 — closed stores are HONEST-DEAD):
+#   - DELETE closes a store (status → CLOSED): 204. The row survives at the
+#     DB level (audit: last_store_admin_id is filled), but it is INVISIBLE to
+#     the API — no reads, no updates, no re-close.
+#   - After close: GET → 404, DELETE again → 404, PUT → 404. Dead is dead.
+#   - Closing releases the store admin's seat: one NON-CLOSED store per
+#     admin, so a closed store's admin can immediately take a new store.
 #
 # How to run:
 #   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
-#   2. Click the "Send Request" CodeLens above any request below.
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
 #
-# Prerequisites: an admin persona (see http/store/create.http header for the
-# SQL promotion one-liner).
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
 #
 # Notes:
-#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
-#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite for these endpoints: StoreApiTests (src/test/java).
+#   - Re-runnable: the manager persona, brand and contact email are minted
+#     fresh each run with {{$timestamp}} — no 409 collisions with prior runs.
 #   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
-#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
-#   - Re-running: request 2 returns 409 (brand persists) — harmless.
-#   - Expected codes: 204 deleted (idempotent), 200 post-delete read shows
-#     status DELETED, 401 no/invalid token, 403 non-admin, 404 unknown id,
-#     405 wrong method.
+#     re-send the SETUP requests from the top (they mint and re-capture).
+#   - REST Client captures die on file/VS Code reopen. If you see raw {{...}}
+#     template text being sent or sudden 500s, re-send the setup requests
+#     from the top — never continue on a dead capture.
+#   - Expected codes: 204 close, 404 dead/unknown store, 401 no/invalid
+#     token, 403 non-admin, 405 wrong method, 201 seat-release proof.
 # =============================================================================
 
 @storeUrl = http://localhost:4000/api/v1/stores
@@ -39,96 +46,140 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 2 — Setup: create a store to delete
-# Expected: 201
-# @name createStore
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201 — never 409, the timestamp makes the persona unique
+# @name sellerSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Doomed Manager",
+  "email": "probe-close-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234580"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name sellerLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{sellerSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the doomed store (minted brand)
+# Expected: 201 — status ACTIVE
+# @name storeOk
 POST {{storeUrl}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {
-  "brand": "Doomed Store",
+  "brand": "Doomed Store {{$timestamp}}",
+  "description": "Born to be closed",
   "storeType": "BRANCH",
-  "storeAdminPublicId": "{{adminLogin.response.body.user.publicId}}",
+  "storeAdminPublicId": "{{sellerLogin.response.body.user.publicId}}",
   "contact": {
     "address": "12 Market Road, Lagos",
     "phone": "08012345678",
-    "email": "doomed-store@devtunde.com"
+    "email": "doomed-{{$timestamp}}@devtunde.com"
   }
 }
 
-### 3 — Delete it
-# Expected: 204 — no body
-DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+### 5 — Close the store
+# Expected: 204 — status flips to CLOSED; the row survives invisibly at the
+# DB level (last_store_admin_id keeps the audit copy)
+DELETE {{storeUrl}}/{{storeOk.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 4 — Delete it AGAIN (idempotent)
-# Expected: 204 — deleting a DELETED store is a no-op that still succeeds
-DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+### 6 — Fetch the closed store
+# Expected: 404 — closed = honest-dead for EVERYONE, including the admin
+GET {{storeUrl}}/{{storeOk.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 5 — Fetch it after deletion
-# Expected: 200 with status DELETED — the soft-delete contract, visible
-GET {{storeUrl}}/{{createStore.response.body.publicId}}
+### 7 — Close it again
+# Expected: 404 — no idempotent second delete; the corpse is already gone
+DELETE {{storeUrl}}/{{storeOk.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 6 — No Authorization header
+### 8 — Try to revive it via update
+# Expected: 404 — PUT on a dead store 404s regardless of payload (Q4: dead
+# stores are immutable; revival would need its own explicit endpoint someday)
+PUT {{storeUrl}}/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "description": "Please come back"
+}
+
+### 9 — Close with no Authorization header
+# Expected: 401 — the security filter runs before routing
+DELETE {{storeUrl}}/{{storeOk.response.body.publicId}}
+
+### 10 — Close with a garbage token
 # Expected: 401
-DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
-
-### 7 — Garbage token
-# Expected: 401
-DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+DELETE {{storeUrl}}/{{storeOk.response.body.publicId}}
 Authorization: Bearer not-a-real-jwt
 
-### 8 — Setup: signup a regular persona
+### 11 — Setup: signup the regular persona (fixed — she never holds a seat)
 # Expected: 201 (409 if she already exists — either way the account exists)
 # @name regularSignup
 POST {{authUrl}}/signup
 Content-Type: application/json
 
 {
-  "fullName": "Bola Deleteless",
-  "email": "bola.deleteless@devtunde.com",
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
   "password": "Password123!",
-  "phone": "+2348031234573"
+  "phone": "+2348031234571"
 }
 
-### 9 — Setup: login the regular persona
+### 12 — Setup: login the regular persona
 # Expected: 200
 # @name regularLogin
 POST {{authUrl}}/login
 Content-Type: application/json
 
 {
-  "email": "bola.deleteless@devtunde.com",
+  "email": "bola.storeless@devtunde.com",
   "password": "Password123!"
 }
 
-### 10 — Delete as a regular user
-# Expected: 403 — deletion is admin-only
-DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
+### 13 — Close as a regular user
+# Expected: 403 — @PreAuthorize ADMIN fires BEFORE the service, so even a
+# dead store's id answers 403 to a non-admin: permission precedes existence
+DELETE {{storeUrl}}/{{storeOk.response.body.publicId}}
 Authorization: Bearer {{regularLogin.response.body.accessToken}}
 
-### 11 — Unknown id
-# Expected: 404 — "Store not found"
+### 14 — Close a store id that never existed
+# Expected: 404
 DELETE {{storeUrl}}/99999999-9999-9999-9999-999999999999
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 12 — Wrong method: POST against the store path
-# Expected: 405 — Allow: GET, PUT, DELETE
-POST {{storeUrl}}/{{createStore.response.body.publicId}}
+### 15 — Wrong method against a single store
+# Expected: 405 — no POST route exists on /stores/{id}
+POST {{storeUrl}}/{{storeOk.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
-Content-Type: application/json
 
-{}
-
-### 13 — Revive the deleted store via update (data recovery is legal)
-# Expected: 200 — status flips back to ACTIVE; no terminality enforced
-PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+### 16 — Seat release (Q5): the closed store's admin takes a NEW store
+# Expected: 201 — closing freed his seat (rule: one NON-CLOSED store per
+# admin; his only store is CLOSED, so the seat is open again)
+# @name storeReborn
+POST {{storeUrl}}
 Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {
-  "status": "ACTIVE"
+  "brand": "Reassigned Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{sellerLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "45 New Address, Ikeja",
+    "phone": "08087654321",
+    "email": "reassigned-{{$timestamp}}@devtunde.com"
+  }
 }
