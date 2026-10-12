@@ -13,6 +13,7 @@ HELP.md
 .env.local
 .env.*.local
 docker-compose.override.yml
+social.md
 
 # Learning records and generated lessons
 

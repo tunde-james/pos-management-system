@@ -512,18 +512,21 @@ class StoreApiTests extends AbstractIntegrationTest {
     // ---------- DELETE /api/v1/stores/{id} ----------
 
     @Test
-    @DisplayName("DELETE soft-deletes: 204, then GET shows status DELETED, not 404")
-    void deleteSetsStatusToDeletedNotRemovesRow() throws Exception {
+    @DisplayName("DELETE closes the store: 204, then GET is 404 while the row survives as CLOSED")
+    void deleteClosesStoreHidesItAndKeepsTheRow() throws Exception {
         String adminToken = adminToken();
         String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Doomed Store", uniqueStoreEmail());
 
         mockMvc.perform(delete("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNoContent());
 
-        // soft delete: the row survives for history — BLOCKED vs DELETED made real
         mockMvc.perform(get("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("DELETED"));
+                .andExpect(status().isNotFound());
+
+        String status =
+                jdbcTemplate.queryForObject("select status from stores where public_id = ?", String.class, publicId);
+
+        org.assertj.core.api.Assertions.assertThat(status).isEqualTo("CLOSED");
     }
 
     @Test
@@ -535,5 +538,150 @@ class StoreApiTests extends AbstractIntegrationTest {
 
         mockMvc.perform(delete("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET my-store returns 404 once the manager's store is closed")
+    void myStoreVanishesAfterClosure() throws Exception {
+        String adminToken = adminToken();
+        String managerEmail = uniqueEmail();
+        signupUser(managerEmail, "Manager Closure");
+        String managerId = publicIdOf(managerEmail);
+        String managerToken = loginForToken(managerEmail);
+        String publicId = createStoreAsAdmin(adminToken, managerId, "Closure Branch", uniqueStoreEmail());
+
+        mockMvc.perform(delete("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/stores/my-store").header("Authorization", "Bearer " + managerToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("PUT on a closed store returns 404 — dead stores are immutable")
+    void updateClosedStoreReturns404() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Frozen Store", uniqueStoreEmail());
+
+        mockMvc.perform(delete("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\": \"Revival attempt\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("DELETE on an already-closed store returns 404 — you cannot close a corpse")
+    void deleteClosedStoreAgainReturns404() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Double Doom Store", uniqueStoreEmail());
+
+        mockMvc.perform(delete("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(delete("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("The store list hides closed stores but shows open ones")
+    void listHidesClosedStores() throws Exception {
+        String adminToken = adminToken();
+        createStoreAsAdmin(adminToken, anyManagerId(), "Visible Store", uniqueStoreEmail());
+        String closedId = createStoreAsAdmin(adminToken, anyManagerId(), "Vanishing Store", uniqueStoreEmail());
+
+        mockMvc.perform(delete("/api/v1/stores/" + closedId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        MvcResult result = mockMvc.perform(get("/api/v1/stores").header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String body = result.getResponse().getContentAsString();
+
+        org.assertj.core.api.Assertions.assertThat(body).contains("Visible Store");
+
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("Vanishing Store");
+    }
+
+    @Test
+    @DisplayName("An admin whose store closed can be assigned to a new store (Q5)")
+    void closedStoreAdminCanBeReassigned() throws Exception {
+        String adminToken = adminToken();
+        String managerEmail = uniqueEmail();
+        signupUser(managerEmail, "Manager Reassigned");
+        String managerId = publicIdOf(managerEmail);
+        String firstStoreId = createStoreAsAdmin(adminToken, managerId, "First Store", uniqueStoreEmail());
+
+        mockMvc.perform(delete("/api/v1/stores/" + firstStoreId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/stores")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createStoreBody("Second Store", managerId, uniqueStoreEmail())))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    @DisplayName("A closed store's admin can be SWAPPED onto another store via PUT (Q5)")
+    void closedStoreAdminCanBeSwappedOntoAnotherStore() throws Exception {
+        String adminToken = adminToken();
+        String managerEmail = uniqueEmail();
+        signupUser(managerEmail, "Manager Swap");
+        String managerId = publicIdOf(managerEmail);
+        String firstStoreId = createStoreAsAdmin(adminToken, managerId, "Swap Source", uniqueStoreEmail());
+        String targetStoreId = createStoreAsAdmin(adminToken, anyManagerId(), "Swap Target", uniqueStoreEmail());
+
+        mockMvc.perform(delete("/api/v1/stores/" + firstStoreId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(put("/api/v1/stores/" + targetStoreId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"storeAdminPublicId\": \"" + managerId + "\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("A BLOCKED store stays visible and updatable — alive but not trading (Q6)")
+    void blockedStoreIsVisibleAndMaintainable() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Blocked But Alive", uniqueStoreEmail());
+
+        jdbcTemplate.update("update stores set status = 'BLOCKED' where public_id = ?", publicId);
+
+        mockMvc.perform(get("/api/v1/stores/" + publicId).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("BLOCKED"));
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\": \"Still maintainable\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("Closing a store via PUT returns 400 — closing is DELETE's job")
+    void updateStoreStatusToClosedReturns400() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Put Close Guard Store", uniqueStoreEmail());
+
+        String body = """
+                    {
+                        "status": "CLOSED"
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Store closure not permitted"));
     }
 }

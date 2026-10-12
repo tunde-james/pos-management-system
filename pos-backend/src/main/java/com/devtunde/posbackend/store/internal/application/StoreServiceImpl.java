@@ -15,6 +15,7 @@ import com.devtunde.posbackend.store.api.dto.StoreRequest;
 import com.devtunde.posbackend.store.api.dto.StoreUpdateRequest;
 import com.devtunde.posbackend.store.api.exception.StoreAdminNotFoundException;
 import com.devtunde.posbackend.store.api.exception.StoreAlreadyExistsException;
+import com.devtunde.posbackend.store.api.exception.StoreClosureNotPermittedException;
 import com.devtunde.posbackend.store.api.exception.StoreNotFoundException;
 import com.devtunde.posbackend.store.internal.domain.Store;
 import com.devtunde.posbackend.store.internal.mapper.StoreMapper;
@@ -44,9 +45,12 @@ public class StoreServiceImpl implements StoreService {
 
         UUID adminId = resolveAdmin(request.storeAdminPublicId());
 
-        if (storeRepository.findByStoreAdminId(adminId).isPresent()) {
-            throw new StoreAlreadyExistsException("store admin");
-        }
+        storeRepository
+                .findByStoreAdminId(adminId)
+                .filter(other -> other.getStatus() != StoreStatus.CLOSED)
+                .ifPresent(other -> {
+                    throw new StoreAlreadyExistsException("store admin");
+                });
 
         if (storeRepository.findByBrand(request.brand()).isPresent()) {
             throw new StoreAlreadyExistsException("brand");
@@ -73,14 +77,17 @@ public class StoreServiceImpl implements StoreService {
     @Override
     public StoreApiResponse getStoreByPublicId(UUID publicId) {
 
-        Store store = storeRepository.findByPublicId(publicId).orElseThrow(StoreNotFoundException::new);
+        Store store = findOpenStore(publicId);
 
         return storeMapper.toResponse(store);
     }
 
     @Override
     public List<StoreApiResponse> getAllStores() {
-        return storeRepository.findAll().stream().map(storeMapper::toResponse).toList();
+        return storeRepository.findAll().stream()
+                .filter(store -> store.getStatus() != StoreStatus.CLOSED)
+                .map(storeMapper::toResponse)
+                .toList();
     }
 
     @Override
@@ -88,7 +95,10 @@ public class StoreServiceImpl implements StoreService {
 
         UUID callerId = userAccountService.currentUser().publicId();
 
-        Store store = storeRepository.findByStoreAdminId(callerId).orElseThrow(StoreNotFoundException::new);
+        Store store = storeRepository
+                .findByStoreAdminId(callerId)
+                .filter(status -> status.getStatus() != StoreStatus.CLOSED)
+                .orElseThrow(StoreNotFoundException::new);
 
         return storeMapper.toResponse(store);
     }
@@ -96,10 +106,13 @@ public class StoreServiceImpl implements StoreService {
     @Override
     public StoreApiResponse updateStore(UUID publicId, StoreUpdateRequest request) {
 
-        Store store = storeRepository.findByPublicId(publicId).orElseThrow(StoreNotFoundException::new);
+        Store store = findOpenStore(publicId);
+
+        if (request.status() == StoreStatus.CLOSED) {
+            throw new StoreClosureNotPermittedException();
+        }
 
         if (request.brand() != null) {
-
             storeRepository.findByBrand(request.brand()).ifPresent(other -> {
                 if (!other.getPublicId().equals(publicId)) {
                     throw new StoreAlreadyExistsException("brand");
@@ -118,11 +131,14 @@ public class StoreServiceImpl implements StoreService {
         if (request.storeAdminPublicId() != null) {
             UUID newAdminId = resolveAdmin(request.storeAdminPublicId());
 
-            storeRepository.findByStoreAdminId(newAdminId).ifPresent(other -> {
-                if (!other.getPublicId().equals(publicId)) {
-                    throw new StoreAlreadyExistsException("store admin");
-                }
-            });
+            storeRepository
+                    .findByStoreAdminId(newAdminId)
+                    .filter(other -> other.getStatus() != StoreStatus.CLOSED)
+                    .ifPresent(other -> {
+                        if (!other.getPublicId().equals(publicId)) {
+                            throw new StoreAlreadyExistsException("store admin");
+                        }
+                    });
         }
 
         storeMapper.update(request, store);
@@ -146,9 +162,11 @@ public class StoreServiceImpl implements StoreService {
     @Override
     public void deleteStore(UUID publicId) {
 
-        Store store = storeRepository.findByPublicId(publicId).orElseThrow(StoreNotFoundException::new);
+        Store store = findOpenStore(publicId);
 
-        store.setStatus(StoreStatus.DELETED);
+        store.setLastStoreAdminId(store.getStoreAdminId());
+        store.setStatus(StoreStatus.CLOSED);
+        store.setStoreAdminId(null);
 
         storeRepository.save(store);
     }
@@ -161,5 +179,15 @@ public class StoreServiceImpl implements StoreService {
         } catch (UserNotFoundException ex) {
             throw new StoreAdminNotFoundException();
         }
+    }
+
+    private Store findOpenStore(UUID publicId) {
+        Store store = storeRepository.findByPublicId(publicId).orElseThrow(StoreNotFoundException::new);
+
+        if (store.getStatus() == StoreStatus.CLOSED) {
+            throw new StoreNotFoundException();
+        }
+
+        return store;
     }
 }

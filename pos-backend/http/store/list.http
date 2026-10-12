@@ -1,21 +1,32 @@
 # =============================================================================
 # Store — LIST requests (VS Code REST Client) — GET /api/v1/stores (ADMIN)
 # =============================================================================
+# Semantics (ticket 0010, Q2): the list is OPERATIONAL TRUTH, not an audit
+# log — CLOSED stores are hidden; ACTIVE/PENDING/BLOCKED all stay visible
+# (pending and blocked are alive, just not trading). Request 10 proves the
+# hiding live: a store that was in the list vanishes after it is closed.
+#
 # How to run:
 #   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
-#   2. Click the "Send Request" CodeLens above any request below.
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
 #
-# Prerequisites: an admin persona (see http/store/create.http header for the
-# SQL promotion one-liner).
+# Prerequisites: the admin persona (see http/store/delete.http header for
+# the SQL promotion one-liner).
 #
 # Notes:
-#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
-#   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suite for these endpoints: StoreApiTests (src/test/java).
+#   - Re-runnable: both manager personas, both brands and contact emails are
+#     minted fresh each run with {{$timestamp}} — no 409 collisions with
+#     prior runs.
 #   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
-#     re-send request 1 (admin login) to refresh the chained tokens, then continue.
-#   - Re-running: request 2's signup returns 409 — harmless, persona persists.
-#   - Expected codes: 200 list (array, ALL statuses — filter client-side),
-#     401 no/invalid token, 403 non-admin, 405 wrong method, 404 trailing slash.
+#     re-send the SETUP requests from the top (they mint and re-capture).
+#   - REST Client captures die on file/VS Code reopen. If you see raw {{...}}
+#     template text being sent or sudden 500s, re-send the setup requests
+#     from the top — never continue on a dead capture.
+#   - Expected codes: 200 list (array of LIVE stores), 401 no/invalid token,
+#     403 non-admin, 405 wrong method, 404 trailing slash, 204 close.
 # =============================================================================
 
 @storeUrl = http://localhost:4000/api/v1/stores
@@ -32,7 +43,118 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 2 — Setup: signup a regular persona
+### 2 — Setup: signup manager A (minted fresh each run)
+# Expected: 201
+# @name sellerASignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Stay Open Manager",
+  "email": "probe-list-a-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234586"
+}
+
+### 3 — Setup: login manager A
+# Expected: 200
+# @name sellerALogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{sellerASignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: signup manager B (minted fresh each run)
+# Expected: 201
+# @name sellerBSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Doomed Manager",
+  "email": "probe-list-b-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234587"
+}
+
+### 5 — Setup: login manager B
+# Expected: 200
+# @name sellerBLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{sellerBSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 6 — Setup: create the store that will STAY open (minted brand)
+# Expected: 201
+# @name storeOpen
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Open Store {{$timestamp}}",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{sellerALogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "probe-open-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 7 — Setup: create the store that will be CLOSED (minted brand)
+# Expected: 201
+# @name storeClosed
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Probe Closed Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{sellerBLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "45 New Address, Ikeja",
+    "phone": "08087654321",
+    "email": "probe-will-close-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 8 — List BEFORE closing
+# Expected: 200 — array contains BOTH minted brands ("Probe Open Store ..." and
+# "Probe Closed Store ..."). Eyeball it — both are alive right now
+GET {{storeUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 9 — Close the second store
+# Expected: 204
+DELETE {{storeUrl}}/{{storeClosed.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 10 — List AFTER closing
+# Expected: 200 — "Probe Open Store ..." is STILL THERE; "Probe Closed
+# Store ..." is GONE (CLOSED hidden — Q2). The closed row survives at the DB
+# level; the list is operational truth, not an audit log
+GET {{storeUrl}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 11 — No Authorization header
+# Expected: 401
+GET {{storeUrl}}
+
+### 12 — Garbage token
+# Expected: 401
+GET {{storeUrl}}
+Authorization: Bearer not-a-real-jwt
+
+### 13 — Setup: signup the regular persona (fixed — she never holds a seat)
 # Expected: 201 (409 if she already exists — either way the account exists)
 # @name regularSignup
 POST {{authUrl}}/signup
@@ -42,10 +164,10 @@ Content-Type: application/json
   "fullName": "Bola Listless",
   "email": "bola.listless@devtunde.com",
   "password": "Password123!",
-  "phone": "+2348031234568"
+  "phone": "+2348031234588"
 }
 
-### 3 — Setup: login the regular persona
+### 14 — Setup: login the regular persona
 # Expected: 200
 # @name regularLogin
 POST {{authUrl}}/login
@@ -56,31 +178,17 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 4 — List all stores as admin
-# Expected: 200 — array of stores, every status included
-GET {{storeUrl}}
-Authorization: Bearer {{adminLogin.response.body.accessToken}}
-
-### 5 — No Authorization header
-# Expected: 401
-GET {{storeUrl}}
-
-### 6 — Garbage token
-# Expected: 401
-GET {{storeUrl}}
-Authorization: Bearer not-a-real-jwt
-
-### 7 — List as a regular user
+### 15 — List as a regular user
 # Expected: 403 — the collection is admin-only
 GET {{storeUrl}}
 Authorization: Bearer {{regularLogin.response.body.accessToken}}
 
-### 8 — Wrong method: DELETE against the collection
+### 16 — Wrong method: DELETE against the collection
 # Expected: 405 — Allow: GET, POST
 DELETE {{storeUrl}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 9 — Wrong method: PUT against the collection
+### 17 — Wrong method: PUT against the collection
 # Expected: 405 — Allow: GET, POST
 PUT {{storeUrl}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
@@ -88,12 +196,12 @@ Content-Type: application/json
 
 {}
 
-### 10 — Trailing slash
+### 18 — Trailing slash
 # Expected: 404 — Spring 7 / Boot 4 does not do trailing-slash matching
 GET {{storeUrl}}/
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 11 — HEAD against the collection
+### 19 — HEAD against the collection
 # Expected: 200 — Spring auto-supports HEAD for GET routes (empty body)
 HEAD {{storeUrl}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}

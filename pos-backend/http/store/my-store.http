@@ -2,44 +2,54 @@
 # Store — MY-STORE requests (VS Code REST Client) — GET /api/v1/stores/my-store
 # =============================================================================
 # my-store resolves the CALLER's own store by storeAdminId = caller's publicId.
-# No role gate — the DATA is the gate: a caller with no store gets an honest 404.
-# This is the endpoint ROLE_STORE_MANAGER personas live on.
+# No role gate — the DATA is the gate: a caller with no store gets an honest
+# 404. This is the endpoint ROLE_STORE_MANAGER personas live on.
+#
+# Semantics (ticket 0010, Q3): a CLOSED store is removed from the manager's
+# own view too — after closure the manager's my-store answers 404, exactly
+# like everyone else's view of the store. The API presents one reality.
 #
 # How to run:
 #   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
-#   2. Click the "Send Request" CodeLens above any request below.
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
 #
-# Prerequisites (TWO admin personas — see request 8 for why):
+# Prerequisites (TWO personas — see request 10 for why):
 #   a) admin@devtunde.com — the working admin (same one as every other store
 #      probe file). Promote with:
 #        update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
-#   b) boss@devtunde.com — a DEDICATED admin who is NEVER assigned a store by
+#   b) boss@devtunde.com — a FIXED persona who is NEVER assigned a store by
 #      any probe file, so request 10's expected 404 stays stable no matter
-#      which files ran before (review round 1 finding). Promote with:
-#        update users set role = 'ROLE_ADMIN' where email = 'boss@devtunde.com';
+#      which files ran before. He needs NO promotion — my-store has no role
+#      gate; his only job is to stay storeless forever.
 #
 # Notes:
-#   - Run top-to-bottom on first use — later requests assume earlier ones ran.
 #   - All data is FAKE. The automated suite: StoreApiTests (src/test/java).
+#   - Re-runnable: the manager persona, brand and contact email are minted
+#     fresh each run with {{$timestamp}} — no 409 collisions with prior runs.
+#     Boss and Bola stay fixed — neither can ever hold a seat, so 409-on-
+#     re-signup is harmless for them.
 #   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
-#     re-send requests 2 (manager), 3 (admin) and 9 (boss) to refresh the chain.
-#   - Re-running: requests 1, 8 and 11 return 409 (personas persist) — harmless.
-#   - Expected codes: 200 own store, 401 no/invalid token, 404 no store,
-#     405 wrong method, 204 delete.
+#     re-send requests 2 (manager), 3 (admin), 9 (boss) and 12 (Bola).
+#   - REST Client captures die on file/VS Code reopen. If you see raw {{...}}
+#     template text being sent or sudden 500s, re-send the setup requests
+#     from the top — never continue on a dead capture.
+#   - Expected codes: 200 own store, 401 no/invalid token, 404 no store or
+#     closed store, 405 wrong method, 204 close.
 # =============================================================================
 
 @storeUrl = http://localhost:4000/api/v1/stores
 @authUrl = http://localhost:4000/api/v1/auth
 
-### 1 — Setup: signup the manager persona
-# Expected: 201 (409 if he already exists — either way the account exists)
+### 1 — Setup: signup the manager persona (minted fresh each run)
+# Expected: 201
 # @name managerSignup
 POST {{authUrl}}/signup
 Content-Type: application/json
 
 {
   "fullName": "Chidi Manager",
-  "email": "chidi.manager@devtunde.com",
+  "email": "probe-my-store-mgr-{{$timestamp}}@devtunde.com",
   "password": "Password123!",
   "phone": "+2348031234570"
 }
@@ -51,7 +61,7 @@ POST {{authUrl}}/login
 Content-Type: application/json
 
 {
-  "email": "chidi.manager@devtunde.com",
+  "email": "{{managerSignup.response.body.user.email}}",
   "password": "Password123!"
 }
 
@@ -66,7 +76,7 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 4 — Admin creates a store and ASSIGNS Chidi as store admin
+### 4 — Admin creates a store and ASSIGNS the manager as store admin
 # Expected: 201
 # @name createManaged
 POST {{storeUrl}}
@@ -74,18 +84,18 @@ Content-Type: application/json
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {
-  "brand": "Managed Branch",
+  "brand": "Managed Branch {{$timestamp}}",
   "storeType": "BRANCH",
   "storeAdminPublicId": "{{managerLogin.response.body.user.publicId}}",
   "contact": {
     "address": "12 Market Road, Lagos",
     "phone": "08012345678",
-    "email": "managed-branch@devtunde.com"
+    "email": "managed-{{$timestamp}}@devtunde.com"
   }
 }
 
 ### 5 — my-store as the assigned manager
-# Expected: 200 — brand "Managed Branch", storeAdminPublicId = Chidi's publicId
+# Expected: 200 — the minted "Managed Branch ..." brand, own publicId back
 GET {{storeUrl}}/my-store
 Authorization: Bearer {{managerLogin.response.body.accessToken}}
 
@@ -98,7 +108,7 @@ GET {{storeUrl}}/my-store
 GET {{storeUrl}}/my-store
 Authorization: Bearer not-a-real-jwt
 
-### 8 — Setup: signup the DEDICATED never-assigned admin (review round 1)
+### 8 — Setup: signup the DEDICATED never-assigned persona (FIXED)
 # Expected: 201 (409 if he already exists — either way the account exists)
 # boss is intentionally given a store by NO probe file — see request 10.
 # @name bossSignup
@@ -125,13 +135,11 @@ Content-Type: application/json
 
 ### 10 — my-store as an admin with no store
 # Expected: 404 — data-gated, not role-gated. STABLE across probe files because
-# boss is the one persona no file ever assigns a store to (review round 1
-# finding 2: the working admin gets stores in the other files, which used to
-# flip this probe's result to 200).
+# boss is the one persona no file ever assigns a store to
 GET {{storeUrl}}/my-store
 Authorization: Bearer {{bossLogin.response.body.accessToken}}
 
-### 11 — Setup: signup a storeless persona
+### 11 — Setup: signup the storeless persona (FIXED — she never holds a seat)
 # Expected: 201 (409 if she already exists — either way the account exists)
 # @name regularSignup
 POST {{authUrl}}/signup
@@ -165,13 +173,14 @@ Authorization: Bearer {{regularLogin.response.body.accessToken}}
 POST {{storeUrl}}/my-store
 Authorization: Bearer {{managerLogin.response.body.accessToken}}
 
-### 15 — Admin soft-deletes the managed store
-# Expected: 204
+### 15 — Admin closes the managed store
+# Expected: 204 — the manager's seat is released with the close
 DELETE {{storeUrl}}/{{createManaged.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 16 — my-store as the manager after deletion
-# Expected: 200 with status DELETED — soft delete preserves history; the manager
-# still sees the store, marked gone
+### 16 — my-store as the manager after closure
+# Expected: 404 — the closed store is gone from the manager's own view too
+# (Q3: one coherent reality; the manager is now seat-free, ready for a new
+# store if the admin assigns one)
 GET {{storeUrl}}/my-store
 Authorization: Bearer {{managerLogin.response.body.accessToken}}
