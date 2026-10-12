@@ -64,8 +64,13 @@ public class Store {
 
     @Setter
     @JdbcTypeCode(SqlTypes.CHAR)
-    @Column(name = "store_admin_id", nullable = false, unique = true, length = 36)
+    @Column(name = "store_admin_id", unique = true, length = 36)
     private UUID storeAdminId;
+
+    @Setter
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "last_store_admin_id", length = 36)
+    private UUID lastStoreAdminId;
 
     @Setter
     @Embedded

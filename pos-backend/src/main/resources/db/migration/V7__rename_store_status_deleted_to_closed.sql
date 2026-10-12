@@ -1,0 +1,1 @@
+UPDATE stores SET status = 'CLOSED' WHERE status = 'DELETED';
