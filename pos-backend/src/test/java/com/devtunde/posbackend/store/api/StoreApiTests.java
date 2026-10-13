@@ -2,7 +2,9 @@ package com.devtunde.posbackend.store.api;
 
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -472,10 +474,10 @@ class StoreApiTests extends AbstractIntegrationTest {
         String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Whitespace Guard Store", uniqueStoreEmail());
 
         String body = """
-                  {
-                      "brand": "   "
-                  }
-                  """.formatted();
+                {
+                    "brand": "   "
+                }
+                """.formatted();
 
         mockMvc.perform(put("/api/v1/stores/" + publicId)
                         .header("Authorization", "Bearer " + adminToken)
@@ -486,20 +488,159 @@ class StoreApiTests extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("Creating a store with hours return them in the response")
+    void createStoreWithHoursReturnsThem() throws Exception {
+        String adminToken = adminToken();
+
+        String body = """
+                    {
+                        "brand": "Early Bird Store",
+                        "storeType": "BRANCH",
+                        "storeAdminPublicId": "%s",
+                        "contact": {
+                            "address": "12 Market Road,Lagos",
+                            "phone": "08012345678",
+                            "email": "%s"
+                        },
+                        "openTime": "09:00:00",
+                        "closeTime": "17:00:00",
+                        "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY"]
+                    }
+                    """.formatted(anyManagerId(), uniqueStoreEmail());
+
+        mockMvc.perform(post("/api/v1/stores")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.openTime").value("09:00:00"))
+                .andExpect(jsonPath("$.closeTime").value("17:00:00"))
+                .andExpect(jsonPath("$.workingDays", hasItem("MONDAY")));
+    }
+
+    @Test
+    @DisplayName("Creating a store without hours returns null hours")
+    void createStoreWithoutHoursReturnsNulls() throws Exception {
+        String adminToken = adminToken();
+
+        mockMvc.perform(post("/api/v1/stores")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createStoreBody("No Hours Store", anyManagerId(), uniqueStoreEmail())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.openTime").value(nullValue()))
+                .andExpect(jsonPath("$.closeTime").value(nullValue()))
+                .andExpect(jsonPath("$.workingDays").value(nullValue()));
+    }
+
+    @Test
+    @DisplayName("Updating only the hours works like any other partial update")
+    void updateStoreHoursOnlyReturnsThem() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Late Owl Store", uniqueStoreEmail());
+
+        String body = """
+                     {
+                         "openTime": "08:30:00",
+                         "closeTime": "18:30:00",
+                         "workingDays": ["MONDAY", "SATURDAY"]
+                     }
+                     """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.openTime").value("08:30:00"))
+                .andExpect(jsonPath("$.closeTime").value("18:30:00"))
+                .andExpect(jsonPath("$.workingDays", hasItem("SATURDAY")));
+    }
+
+    @Test
+    @DisplayName("An empty workingDays list clears the days; null leaves them alone")
+    void updateStoreEmptyWorkingDaysClearsTheList() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Clearable Days Store", uniqueStoreEmail());
+
+        String setDays = """
+                    {
+                        "workingDays": ["MONDAY", "TUESDAY"] 
+                    }
+                    """.formatted();
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(setDays))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workingDays", hasItem("TUESDAY")));
+
+        String clearDays = """
+                     { "workingDays": [] }
+                     """.formatted();
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(clearDays))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workingDays", hasSize(0)));
+    }
+
+    @Test
+    @DisplayName("An invalid day name is a 400, never a 500")
+    void updateStoreInvalidDayNameReturns400() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Bad Days Store", uniqueStoreEmail());
+
+        String body = """
+                    { 
+                        "workingDays": ["MONDAYY"] 
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("closeTime at or before openTime in the same request is a 400")
+    void updateStoreCloseBeforeOpenReturns400() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Time Warp Store", uniqueStoreEmail());
+
+        String body = """
+                    { 
+                        "openTime": "17:00:00", 
+                        "closeTime": "09:00:00" 
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Invalid store hours"));
+    }
+
+    @Test
     @DisplayName("Updating the contact normalizes the phone to E.164, same as create")
     void updateContactNormalizesPhoneToE164() throws Exception {
         String adminToken = adminToken();
         String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Phone Format Store", uniqueStoreEmail());
 
         String body = """
-                  {
-                      "contact": {
-                          "address": "45 New Address, Ikeja",
-                          "phone": "08087654321",
-                          "email": "%s"
-                      }
-                  }
-                  """.formatted(uniqueStoreEmail());
+                {
+                    "contact": {
+                        "address": "45 New Address, Ikeja",
+                        "phone": "08087654321",
+                        "email": "%s"
+                    }
+                }
+                """.formatted(uniqueStoreEmail());
 
         mockMvc.perform(put("/api/v1/stores/" + publicId)
                         .header("Authorization", "Bearer " + adminToken)
