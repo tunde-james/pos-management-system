@@ -1,6 +1,9 @@
 package com.devtunde.posbackend.store.api.dto;
 
+import java.time.DayOfWeek;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 import com.devtunde.posbackend.store.api.StoreStatus;
@@ -14,6 +17,9 @@ public record StoreApiResponse(
         StoreStatus status,
         Contact contact,
         UUID storeAdminPublicId,
+        LocalTime openTime,
+        LocalTime closeTime,
+        List<DayOfWeek> workingDays,
         LocalDateTime createdAt,
         LocalDateTime updatedAt) {
 

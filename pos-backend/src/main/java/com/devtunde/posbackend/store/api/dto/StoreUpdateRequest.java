@@ -1,5 +1,8 @@
 package com.devtunde.posbackend.store.api.dto;
 
+import java.time.DayOfWeek;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -26,7 +29,13 @@ public record StoreUpdateRequest(
 
         UUID storeAdminPublicId,
 
-        @Valid Contact contact) {
+        @Valid Contact contact,
+
+        LocalTime openTime,
+
+        LocalTime closeTime,
+
+        List<DayOfWeek> workingDays) {
 
     public record Contact(
             @NotBlank(message = "Address is required")

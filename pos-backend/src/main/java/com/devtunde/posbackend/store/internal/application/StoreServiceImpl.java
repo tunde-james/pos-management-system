@@ -1,5 +1,6 @@
 package com.devtunde.posbackend.store.internal.application;
 
+import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -13,6 +14,7 @@ import com.devtunde.posbackend.store.api.StoreStatus;
 import com.devtunde.posbackend.store.api.dto.StoreApiResponse;
 import com.devtunde.posbackend.store.api.dto.StoreRequest;
 import com.devtunde.posbackend.store.api.dto.StoreUpdateRequest;
+import com.devtunde.posbackend.store.api.exception.InvalidStoreHoursException;
 import com.devtunde.posbackend.store.api.exception.StoreAdminNotFoundException;
 import com.devtunde.posbackend.store.api.exception.StoreAlreadyExistsException;
 import com.devtunde.posbackend.store.api.exception.StoreClosureNotPermittedException;
@@ -45,6 +47,8 @@ public class StoreServiceImpl implements StoreService {
 
         UUID adminId = resolveAdmin(request.storeAdminPublicId());
 
+        validateHours(request.openTime(), request.closeTime());
+
         storeRepository
                 .findByStoreAdminId(adminId)
                 .filter(other -> other.getStatus() != StoreStatus.CLOSED)
@@ -70,6 +74,10 @@ public class StoreServiceImpl implements StoreService {
                 phone,
                 request.contact().email(),
                 adminId);
+
+        store.setOpenTime(request.openTime());
+        store.setCloseTime(request.closeTime());
+        store.setWorkingDays(request.workingDays());
 
         return storeMapper.toResponse(storeRepository.save(store));
     }
@@ -111,6 +119,8 @@ public class StoreServiceImpl implements StoreService {
         if (request.status() == StoreStatus.CLOSED) {
             throw new StoreClosureNotPermittedException();
         }
+
+        validateHours(request.openTime(), request.closeTime());
 
         if (request.brand() != null) {
             storeRepository.findByBrand(request.brand()).ifPresent(other -> {
@@ -189,5 +199,11 @@ public class StoreServiceImpl implements StoreService {
         }
 
         return store;
+    }
+
+    private void validateHours(LocalTime openTime, LocalTime closeTime) {
+        if (openTime != null && closeTime != null && !closeTime.isAfter(openTime)) {
+            throw new InvalidStoreHoursException();
+        }
     }
 }
