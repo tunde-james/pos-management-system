@@ -5,6 +5,12 @@
 # ignored). Present-but-empty strings are honored. When contact IS present
 # it must be complete (replaced as a whole unit).
 #
+# Hours (ticket 0011): openTime/closeTime/workingDays ride the same partial
+# rules — null leaves a value untouched, an EMPTY workingDays list CLEARS the
+# days. Day names only (List<DayOfWeek>); a bad name is a 400 at
+# deserialization. closeTime before openTime in one request is a 400.
+# Cases: requests 20–23.
+#
 # Rules since ticket 0010:
 #   - PUT on a CLOSED store → 404 (dead stores are immutable).
 #   - PUT cannot set status to CLOSED → 400 (closing is DELETE's job; DELETE
@@ -31,8 +37,8 @@
 #     template text being sent or sudden 500s, re-send the setup requests
 #     from the top — never continue on a dead capture.
 #   - Expected codes: 200 updated, 400 ghost admin/bad storeType/CLOSED via
-#     PUT, 401 no/invalid token, 403 non-admin, 404 unknown or closed store,
-#     204 close, 405 wrong method.
+#     PUT/invalid day name/close-before-open hours, 401 no/invalid token,
+#     403 non-admin, 404 unknown or closed store, 204 close, 405 wrong method.
 # =============================================================================
 
 @storeUrl = http://localhost:4000/api/v1/stores
@@ -250,12 +256,59 @@ Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
 {}
 
-### 20 — Close the store (the ONE legal closing door)
+### 20 — Update ONLY the hours (partial update, ticket 0011)
+# Expected: 200 — openTime/closeTime/workingDays changed; brand and contact
+# untouched
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "openTime": "08:30:00",
+  "closeTime": "18:30:00",
+  "workingDays": ["MONDAY", "SATURDAY"]
+}
+
+### 21 — Clear the working days with an empty list
+# Expected: 200 — present-but-empty is honored: [] CLEARS the days (null
+# would leave them unchanged). The response shows an empty workingDays array
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "workingDays": []
+}
+
+### 22 — Invalid day name
+# Expected: 400, never 500 — the DTO field is List<DayOfWeek>, so Jackson
+# rejects "MONDAYY" while binding the request, before any service code runs
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "workingDays": ["MONDAYY"]
+}
+
+### 23 — closeTime before openTime in one request
+# Expected: 400 — title "Invalid store hours". Only checked when both times
+# arrive together; sending one time never touches the other
+PUT {{storeUrl}}/{{createStore.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "openTime": "17:00:00",
+  "closeTime": "09:00:00"
+}
+
+### 24 — Close the store (the ONE legal closing door)
 # Expected: 204 — status → CLOSED; the admin's seat is released
 DELETE {{storeUrl}}/{{createStore.response.body.publicId}}
 Authorization: Bearer {{adminLogin.response.body.accessToken}}
 
-### 21 — Update the CLOSED store
+### 25 — Update the CLOSED store
 # Expected: 404 — dead stores are immutable; even the admin gets honest-404
 PUT {{storeUrl}}/{{createStore.response.body.publicId}}
 Content-Type: application/json
