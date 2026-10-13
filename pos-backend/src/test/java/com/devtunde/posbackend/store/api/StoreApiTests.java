@@ -565,7 +565,7 @@ class StoreApiTests extends AbstractIntegrationTest {
 
         String setDays = """
                     {
-                        "workingDays": ["MONDAY", "TUESDAY"] 
+                        "workingDays": ["MONDAY", "TUESDAY"]
                     }
                     """.formatted();
         mockMvc.perform(put("/api/v1/stores/" + publicId)
@@ -593,8 +593,8 @@ class StoreApiTests extends AbstractIntegrationTest {
         String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Bad Days Store", uniqueStoreEmail());
 
         String body = """
-                    { 
-                        "workingDays": ["MONDAYY"] 
+                    {
+                        "workingDays": ["MONDAYY"]
                     }
                     """.formatted();
 
@@ -612,9 +612,9 @@ class StoreApiTests extends AbstractIntegrationTest {
         String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Time Warp Store", uniqueStoreEmail());
 
         String body = """
-                    { 
-                        "openTime": "17:00:00", 
-                        "closeTime": "09:00:00" 
+                    {
+                        "openTime": "17:00:00",
+                        "closeTime": "09:00:00"
                     }
                     """.formatted();
 
@@ -824,5 +824,92 @@ class StoreApiTests extends AbstractIntegrationTest {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Store closure not permitted"));
+    }
+
+    @Test
+    @DisplayName("openTime alone, invalid against the stored closeTime, is a 400")
+    void updateStoreOpenTimeAloneAgainstStoredCloseTimeReturns400() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Effective Hours Store", uniqueStoreEmail());
+
+        String setHours = """
+                    {
+                        "openTime": "09:00:00",
+                        "closeTime": "17:00:00"
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(setHours))
+                .andExpect(status().isOk());
+
+        String badOpen = """
+                    {
+                        "openTime": "18:00:00"
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(badOpen))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Invalid store hours"));
+    }
+
+    @Test
+    @DisplayName("openTime alone, valid against the stored closeTime, applies")
+    void updateStoreOpenTimeAloneAgainstStoredCloseTimeApplies() throws Exception {
+        String adminToken = adminToken();
+        String publicId =
+                createStoreAsAdmin(adminToken, anyManagerId(), "Effective Hours Store Two", uniqueStoreEmail());
+
+        String setHours = """
+                    {
+                        "openTime": "09:00:00",
+                        "closeTime": "17:00:00"
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(setHours))
+                .andExpect(status().isOk());
+
+        String goodOpen = """
+                    {
+                        "openTime": "10:00:00"
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(goodOpen))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.openTime").value("10:00:00"))
+                .andExpect(jsonPath("$.closeTime").value("17:00:00"));
+    }
+
+    @Test
+    @DisplayName("Fractional seconds in a time field are a 400, not silent rounding")
+    void updateStoreFractionalHoursReturns400() throws Exception {
+        String adminToken = adminToken();
+        String publicId = createStoreAsAdmin(adminToken, anyManagerId(), "Precise Hours Store", uniqueStoreEmail());
+
+        String body = """
+                    {
+                        "openTime": "09:00:00.100"
+                    }
+                    """.formatted();
+
+        mockMvc.perform(put("/api/v1/stores/" + publicId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
     }
 }

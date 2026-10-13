@@ -120,7 +120,9 @@ public class StoreServiceImpl implements StoreService {
             throw new StoreClosureNotPermittedException();
         }
 
-        validateHours(request.openTime(), request.closeTime());
+        validateHours(
+                request.openTime() != null ? request.openTime() : store.getOpenTime(),
+                request.closeTime() != null ? request.closeTime() : store.getCloseTime());
 
         if (request.brand() != null) {
             storeRepository.findByBrand(request.brand()).ifPresent(other -> {

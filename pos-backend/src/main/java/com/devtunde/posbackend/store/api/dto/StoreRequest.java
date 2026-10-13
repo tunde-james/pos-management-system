@@ -13,6 +13,7 @@ import jakarta.validation.constraints.Size;
 
 import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
 import com.devtunde.posbackend.store.api.StoreType;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 public record StoreRequest(
         @NotBlank(message = "Brand is required") @Size(max = 100, message = "Brand must be at most 100 characters")
@@ -28,9 +29,9 @@ public record StoreRequest(
         @NotNull(message = "Contact details are required") @Valid
         Contact contact,
 
-        LocalTime openTime,
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime openTime,
 
-        LocalTime closeTime,
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime closeTime,
 
         List<DayOfWeek> workingDays) {
 

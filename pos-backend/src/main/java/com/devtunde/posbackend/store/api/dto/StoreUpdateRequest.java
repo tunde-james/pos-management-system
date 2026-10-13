@@ -14,6 +14,7 @@ import jakarta.validation.constraints.Size;
 import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
 import com.devtunde.posbackend.store.api.StoreStatus;
 import com.devtunde.posbackend.store.api.StoreType;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 public record StoreUpdateRequest(
         @Pattern(regexp = "(?U)(?s).*\\S.*", message = "Brand must not be blank")
@@ -31,9 +32,9 @@ public record StoreUpdateRequest(
 
         @Valid Contact contact,
 
-        LocalTime openTime,
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime openTime,
 
-        LocalTime closeTime,
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime closeTime,
 
         List<DayOfWeek> workingDays) {
 
