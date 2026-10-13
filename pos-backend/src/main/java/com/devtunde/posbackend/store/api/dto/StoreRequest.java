@@ -1,5 +1,8 @@
 package com.devtunde.posbackend.store.api.dto;
 
+import java.time.DayOfWeek;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -10,6 +13,7 @@ import jakarta.validation.constraints.Size;
 
 import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
 import com.devtunde.posbackend.store.api.StoreType;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 public record StoreRequest(
         @NotBlank(message = "Brand is required") @Size(max = 100, message = "Brand must be at most 100 characters")
@@ -23,7 +27,13 @@ public record StoreRequest(
         @NotNull(message = "A store admin must be assigned") UUID storeAdminPublicId,
 
         @NotNull(message = "Contact details are required") @Valid
-        Contact contact) {
+        Contact contact,
+
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime openTime,
+
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime closeTime,
+
+        List<DayOfWeek> workingDays) {
 
     public record Contact(
             @NotBlank(message = "Address is required")

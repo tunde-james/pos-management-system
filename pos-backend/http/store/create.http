@@ -6,6 +6,9 @@
 # so a manager whose only store was closed can take a new one (proven in
 # requests 9–11); a manager whose store is still open cannot double-hold
 # (request 9).
+#   - Operating hours are optional at create (ticket 0011): openTime,
+#     closeTime, workingDays (day names). closeTime must be after openTime
+#     when both arrive together (400 otherwise). Hours cases: requests 20–23.
 #
 # How to run:
 #   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
@@ -31,8 +34,9 @@
 #     template text being sent or sudden 500s, re-send the setup requests
 #     from the top — never continue on a dead capture.
 #   - Expected codes: 201 created, 400 invalid payload/ghost admin/bad
-#     storeType, 401 no/invalid token, 403 non-admin, 409 duplicate brand,
-#     duplicate contact email, or admin already holds a store, 204 close.
+#     storeType/close-before-open hours, 401 no/invalid token, 403 non-admin,
+#     409 duplicate brand, duplicate contact email, or admin already holds a
+#     store, 204 close.
 # =============================================================================
 
 @storeUrl = http://localhost:4000/api/v1/stores
@@ -319,4 +323,70 @@ Authorization: Bearer {{regularLogin.response.body.accessToken}}
     "phone": "08012345678",
     "email": "nope-store@devtunde.com"
   }
+}
+
+### 20 — Setup: signup a second manager for the hours cases (minted fresh)
+# Expected: 201
+# @name hoursMgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Hours Manager",
+  "email": "probe-hours-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234595"
+}
+
+### 21 — Setup: login the hours manager
+# Expected: 200
+# @name hoursMgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{hoursMgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 22 — Create a store WITH operating hours (ticket 0011)
+# Expected: 201 — response echoes openTime 09:00:00, closeTime 17:00:00 and
+# the five working days
+# @name createWithHours
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Clockwork Store {{$timestamp}}",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{hoursMgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "clockwork-{{$timestamp}}@devtunde.com"
+  },
+  "openTime": "09:00:00",
+  "closeTime": "17:00:00",
+  "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"]
+}
+
+### 23 — Create with closeTime before openTime
+# Expected: 400 — title "Invalid store hours". Hours are optional, but when
+# both times arrive together, close must be after open
+POST {{storeUrl}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Time Warp Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{hoursMgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "45 New Address, Ikeja",
+    "phone": "08087654321",
+    "email": "time-warp-{{$timestamp}}@devtunde.com"
+  },
+  "openTime": "17:00:00",
+  "closeTime": "09:00:00"
 }

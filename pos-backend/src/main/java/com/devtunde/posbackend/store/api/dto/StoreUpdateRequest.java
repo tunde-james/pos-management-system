@@ -1,5 +1,8 @@
 package com.devtunde.posbackend.store.api.dto;
 
+import java.time.DayOfWeek;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -11,6 +14,7 @@ import jakarta.validation.constraints.Size;
 import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
 import com.devtunde.posbackend.store.api.StoreStatus;
 import com.devtunde.posbackend.store.api.StoreType;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 public record StoreUpdateRequest(
         @Pattern(regexp = "(?U)(?s).*\\S.*", message = "Brand must not be blank")
@@ -26,7 +30,13 @@ public record StoreUpdateRequest(
 
         UUID storeAdminPublicId,
 
-        @Valid Contact contact) {
+        @Valid Contact contact,
+
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime openTime,
+
+        @JsonFormat(pattern = "HH:mm[:ss]") LocalTime closeTime,
+
+        List<DayOfWeek> workingDays) {
 
     public record Contact(
             @NotBlank(message = "Address is required")

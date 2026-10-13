@@ -1,6 +1,9 @@
 package com.devtunde.posbackend.store.internal.domain;
 
+import java.time.DayOfWeek;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.persistence.Column;
@@ -75,6 +78,19 @@ public class Store {
     @Setter
     @Embedded
     private StoreContact contact = new StoreContact();
+
+    @Setter
+    @Column(name = "open_time")
+    private LocalTime openTime;
+
+    @Setter
+    @Column(name = "close_time")
+    private LocalTime closeTime;
+
+    @Setter
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "working_days")
+    private List<DayOfWeek> workingDays;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
