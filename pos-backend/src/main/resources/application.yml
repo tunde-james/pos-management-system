@@ -47,3 +47,7 @@ app:
       window: 1m
     refresh:
       ttl: 7d
+  inventory:
+    low-stock:
+      cron: '0 0 9 * * *'
+      zone: 'Africa/Lagos'
