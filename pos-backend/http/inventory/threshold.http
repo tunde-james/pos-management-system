@@ -1,0 +1,285 @@
+# =============================================================================
+# Inventory — THRESHOLD UPDATE (VS Code REST Client) — PUT /api/v1/stores/{storeId}/inventory/products/{productPublicId}/threshold (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: the low-stock threshold is the manager's encoded sales velocity
+# (ticket 0012, Q4) — alerting configuration, not stock. Updating it touches
+# NO movement row: the ledger records stock mutations, and a threshold is not
+# one (Q3). Zero is legal ("alert me only at zero"); negative is a payload
+# error. The pair's quantity is untouched by this call.
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 updated, 400 invalid payload, 401 no/invalid token,
+#     403 wrong identity, 404 unknown/closed store, unlisted product, or
+#     listed-but-unstocked pair.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Threshold Probe Manager",
+  "email": "probe-thr-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234600"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Threshold Probe Store {{$timestamp}}",
+  "description": "Probe store for threshold updates",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "threshold-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Threshold Category {{$timestamp}}"
+}
+
+### 6 — Setup: list a product in the store
+# Expected: 201
+# @name listingOk
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Threshold Milk",
+  "sku": "SKU-THR-{{$timestamp}}",
+  "description": "Milk for threshold probes",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: create stock (100 on shelf, threshold 10)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Raise the threshold: 10 sells too slow for this store's milk
+# Expected: 200 — lowStockThreshold 25; quantity 100 UNTOUCHED (alerting
+# config, not stock — no ledger row is written)
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 25
+}
+
+### 9 — Threshold zero: "alert me only when the shelf is empty"
+# Expected: 200 — lowStockThreshold 0 (Q4's zero-threshold tier)
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 0
+}
+
+### 10 — Negative threshold
+# Expected: 400 — field error on lowStockThreshold; zero is the floor (Q3)
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": -1
+}
+
+### 11 — Missing lowStockThreshold entirely
+# Expected: 400 — the request says nothing to change
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+}
+
+### 12 — No Authorization header
+# Expected: 401
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+
+{
+  "lowStockThreshold": 25
+}
+
+### 13 — Garbage token
+# Expected: 401
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "lowStockThreshold": 25
+}
+
+### 14 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 15 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 16 — Update the threshold as a regular user
+# Expected: 403 — identity gate
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 25
+}
+
+### 17 — Unknown product: the listing gate fires first
+# Expected: 404 — title "Product not found"
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/11111111-1111-1111-1111-111111111111/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 25
+}
+
+### 18 — Setup: list a second product but never stock it
+# Expected: 201
+# @name listingUnstocked
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Unstocked Threshold Milk",
+  "sku": "SKU-THU-{{$timestamp}}",
+  "description": "Listed, shelf never counted",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 8000.00,
+  "sellingPrice": 7500.00
+}
+
+### 19 — Listed but unstocked: no row to re-tune
+# Expected: 404 — title "Inventory not found" (distinct from "Product not found")
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingUnstocked.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 25
+}
+
+### 20 — Unknown store
+# Expected: 404 — title "Store not found"
+PUT {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 25
+}
+
+### 21 — Close the store, then update the threshold
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 22 — Closed store: gone even for its own admin
+# Expected: 404 — title "Store not found"
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 25
+}

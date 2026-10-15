@@ -1,0 +1,350 @@
+# =============================================================================
+# Inventory — STOCKTAKE (VS Code REST Client) — PUT /api/v1/stores/{storeId}/inventory/products/{productPublicId} (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: an explicit count, not a delta (ticket 0012, Q5). You count the
+# shelf and report the truth — the service computes the delta and records an
+# ADJUSTMENT movement. A count matching the current stock is legal (delta 0).
+# A count of zero is legal (shelf counted empty). A negative count is a
+# payload error. Guard order: store visibility (404 unknown/closed), then
+# identity (403 — a foreign admin on a live store, never 404), then the
+# listing gate (404 "Product not found"), then the row (404 "Inventory not
+# found").
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 counted, 400 invalid payload, 401 no/invalid token,
+#     403 wrong identity, 404 unknown/closed store, unlisted product, or
+#     listed-but-unstocked pair.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Stocktake Probe Manager",
+  "email": "probe-stocktake-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234598"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Stocktake Probe Store {{$timestamp}}",
+  "description": "Probe store for stocktakes",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "stocktake-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Stocktake Category {{$timestamp}}"
+}
+
+### 6 — Setup: list a product in the store
+# Expected: 201
+# @name listingOk
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Stocktake Milk",
+  "sku": "SKU-ST-{{$timestamp}}",
+  "description": "Milk for stocktake probes",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: create stock (100 on shelf, threshold 10)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Count the shelf: the books said 100, 60 remain
+# Expected: 200 — quantity 60; the service records ADJUSTMENT (before 100,
+# after 60) — the delta is computed, never sent
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 9 — A count that matches the books: delta 0, still a legal stocktake
+# Expected: 200 — quantity 60; an ADJUSTMENT movement with delta 0 is recorded
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 10 — Count the shelf empty: zero is the truth, not an error
+# Expected: 200 — quantity 0 (the pair lands in the OUT tier of low-stock)
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 0
+}
+
+### 11 — Negative count
+# Expected: 400 — field error on quantity; stock never goes below zero (Q3)
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": -5
+}
+
+### 12 — Missing quantity entirely
+# Expected: 400 — a stocktake without a count is not a stocktake
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+}
+
+### 13 — No Authorization header
+# Expected: 401
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+
+{
+  "quantity": 60
+}
+
+### 14 — Garbage token
+# Expected: 401
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "quantity": 60
+}
+
+### 15 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 16 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 17 — Stocktake as a regular user
+# Expected: 403 — identity gate
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 18 — Setup: signup a SECOND manager (a foreign store's admin)
+# Expected: 201
+# @name mgr2Signup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Foreign Stocktake Manager",
+  "email": "probe-stocktake-mgr2-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234599"
+}
+
+### 19 — Setup: login the foreign manager
+# Expected: 200
+# @name mgr2Login
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgr2Signup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 20 — Setup: give the foreign manager her own store
+# Expected: 201
+# @name store2Ok
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Foreign Stocktake Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{mgr2Login.response.body.user.publicId}}",
+  "contact": {
+    "address": "3 Elsewhere Ave",
+    "phone": "08087654321",
+    "email": "foreign-stocktake-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 21 — Foreign store admin stocktakes a LIVE store she doesn't own
+# Expected: 403 — live-store identity failure, never 404 (product-module precedent)
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgr2Login.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 22 — Unknown product: the listing gate fires first
+# Expected: 404 — title "Product not found"
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/11111111-1111-1111-1111-111111111111
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 23 — Setup: list a second product but never stock it
+# Expected: 201
+# @name listingUnstocked
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Unstocked Stocktake Milk",
+  "sku": "SKU-SU-{{$timestamp}}",
+  "description": "Listed, shelf never counted",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 8000.00,
+  "sellingPrice": 7500.00
+}
+
+### 24 — Listed but unstocked: nothing to count
+# Expected: 404 — title "Inventory not found" (distinct from "Product not found")
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingUnstocked.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 25 — Unknown store
+# Expected: 404 — title "Store not found"
+PUT {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 26 — Close the store, then stocktake
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 27 — Closed store: gone even for its own admin
+# Expected: 404 — title "Store not found"
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}

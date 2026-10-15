@@ -1,0 +1,354 @@
+# =============================================================================
+# Inventory — LOW STOCK REPORT (VS Code REST Client) — GET /api/v1/stores/{storeId}/inventory/low-stock (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: two tiers, not one (ticket 0012, Q4). LOW: quantity <= threshold
+# AND > 0. OUT: quantity = 0. A pair with threshold 0 is OUT the moment its
+# quantity hits 0 — threshold 0 means "alert me only at zero". Healthy pairs
+# appear in neither tier. Each tier deduplicates structurally: one row per
+# listing, never one row per tier criterion.
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 report, 401 no/invalid token, 403 wrong identity,
+#     404 unknown/closed store.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Low Stock Probe Manager",
+  "email": "probe-low-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234596"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Low Stock Probe Store {{$timestamp}}",
+  "description": "Probe store for low-stock reports",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "low-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Low Category {{$timestamp}}"
+}
+
+### 6 — Setup: list the HEALTHY product (100 on shelf, threshold 10)
+# Expected: 201
+# @name listingHealthy
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Healthy Milk",
+  "sku": "SKU-H-{{$timestamp}}",
+  "description": "Plenty on shelf",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: stock the healthy product
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingHealthy.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Setup: list the LOW product
+# Expected: 201
+# @name listingLow
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Dwindling Milk",
+  "sku": "SKU-W-{{$timestamp}}",
+  "description": "Below threshold but not gone",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 10000.00,
+  "sellingPrice": 9500.00
+}
+
+### 9 — Setup: stock the low product (8 on shelf, threshold 10)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingLow.response.body.publicId}}",
+  "quantity": 8,
+  "lowStockThreshold": 10
+}
+
+### 10 — Setup: list the OUT product
+# Expected: 201
+# @name listingOut
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Gone Milk",
+  "sku": "SKU-G-{{$timestamp}}",
+  "description": "Shelf is empty",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 8000.00,
+  "sellingPrice": 7500.00
+}
+
+### 11 — Setup: stock the out product (0 on shelf, threshold 10)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOut.response.body.publicId}}",
+  "quantity": 0,
+  "lowStockThreshold": 10
+}
+
+### 12 — Setup: list the ZERO-THRESHOLD product
+# Expected: 201
+# @name listingZero
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Zero Watch Milk",
+  "sku": "SKU-ZW-{{$timestamp}}",
+  "description": "Threshold zero: alert only at zero",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 6000.00,
+  "sellingPrice": 5500.00
+}
+
+### 13 — Setup: stock the zero-threshold product (0 on shelf, threshold 0)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingZero.response.body.publicId}}",
+  "quantity": 0,
+  "lowStockThreshold": 0
+}
+
+### 14 — The report: tiers split exactly
+# Expected: 200 — low[] has 1 item (Dwindling Milk, 8/10); out[] has 2 items
+# (Gone Milk 0/10 and Zero Watch Milk 0/0); Healthy Milk is in neither tier
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/low-stock
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 15 — No Authorization header
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/low-stock
+
+### 16 — Garbage token
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/low-stock
+Authorization: Bearer not-a-real-jwt
+
+### 17 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 18 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 19 — Read the report as a regular user
+# Expected: 403 — identity gate
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/low-stock
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 20 — Unknown store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory/low-stock
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 21 — Setup: signup + seat a healthy-store manager
+# Expected: 201
+# @name mgr2Signup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Healthy Store Manager",
+  "email": "probe-healthy-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234597"
+}
+
+### 22 — Setup: login the healthy-store manager
+# Expected: 200
+# @name mgr2Login
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgr2Signup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 23 — Setup: create her store
+# Expected: 201
+# @name store2Ok
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Healthy Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{mgr2Login.response.body.user.publicId}}",
+  "contact": {
+    "address": "3 Elsewhere Ave",
+    "phone": "08087654321",
+    "email": "healthy-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 24 — Setup: list + stock a single healthy product in her store
+# Expected: 201 (listing)
+# @name listingHealthy2
+POST {{baseUrl}}/products/store/{{store2Ok.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgr2Login.response.body.accessToken}}
+
+{
+  "name": "Well Stocked Milk",
+  "sku": "SKU-WS-{{$timestamp}}",
+  "description": "Nothing to alert about",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 5000.00,
+  "sellingPrice": 4500.00
+}
+
+### 25 — Setup: stock it well above threshold
+# Expected: 201
+POST {{baseUrl}}/stores/{{store2Ok.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgr2Login.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingHealthy2.response.body.publicId}}",
+  "quantity": 500,
+  "lowStockThreshold": 20
+}
+
+### 26 — A healthy store reports two empty tiers, not a 404
+# Expected: 200 — { "low": [], "out": [] }
+GET {{baseUrl}}/stores/{{store2Ok.response.body.publicId}}/inventory/low-stock
+Authorization: Bearer {{mgr2Login.response.body.accessToken}}
+
+### 27 — Close the first store, then read its report
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 28 — Closed store: the report is gone with the store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/low-stock
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}

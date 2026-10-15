@@ -1,0 +1,314 @@
+# =============================================================================
+# Inventory — CREATE requests (VS Code REST Client) — POST /api/v1/stores/{storeId}/inventory (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: stock is keyed by the LISTING pair (store, productPublicId) —
+# no inventory id exists on the wire (ticket 0012, Q1). The listing gate
+# runs first: creating stock for a product the store does not sell is
+# 404 "Product not found", never a stock error. Every create records an
+# OPENING movement (before 0, after quantity). A pair delisted then
+# re-listed un-archives its row with an ADJUSTMENT movement — never 409
+# (Q2 B). Zero quantity is a legal OPENING; zero threshold means
+# "alert me only at zero" (Q3/Q4).
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs. Duplicate-pair
+#     probes CHAIN values from live responses instead of recomputing
+#     {{$timestamp}} (it re-evaluates per send — chaining captures is the only
+#     reliable way to refer to a minted value later).
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 201 created, 400 invalid payload, 401 no/invalid token,
+#     403 wrong identity, 404 unknown/closed store or unlisted product,
+#     409 live duplicate pair.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Inventory Probe Manager",
+  "email": "probe-inv-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234590"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Inventory Probe Store {{$timestamp}}",
+  "description": "Probe store for the inventory API",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "inv-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category (minted — category names are unique chain-wide)
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Probe Category {{$timestamp}}"
+}
+
+### 6 — Setup: list a product in the store (the listing pair comes to life)
+# Expected: 201
+# @name listingOk
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Probe Full Milk",
+  "sku": "SKU-{{$timestamp}}",
+  "description": "Milk for the inventory probes",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Create stock for the live listing
+# Expected: 201 — echoes quantity 100, lowStockThreshold 10; an OPENING
+# movement (0 -> 100) is recorded in the ledger
+# @name stockCreate
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Duplicate pair (chained from request 7's live response)
+# Expected: 409 — "Inventory already exists"; the live row blocks a second
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{stockCreate.response.body.productPublicId}}",
+  "quantity": 50,
+  "lowStockThreshold": 5
+}
+
+### 9 — No Authorization header
+# Expected: 401
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 10 — Garbage token
+# Expected: 401
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 11 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 12 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 13 — Create stock as a regular user
+# Expected: 403 — identity gate: not the store's admin, not the chain admin
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 14 — Unknown product: the listing gate fires first
+# Expected: 404 — title "Product not found", never a stock error
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "11111111-1111-1111-1111-111111111111",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 15 — Unknown store
+# Expected: 404 — title "Store not found"
+POST {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 16 — Negative quantity
+# Expected: 400 — field error on quantity; stock never goes below zero (Q3)
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": -5,
+  "lowStockThreshold": 10
+}
+
+### 17 — Missing quantity entirely
+# Expected: 400 — quantity is required at create
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "lowStockThreshold": 10
+}
+
+### 18 — Negative threshold
+# Expected: 400 — field error on lowStockThreshold; zero is legal, negative is nonsense
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": -1
+}
+
+### 19 — Setup: list a second product for the zero-quantity case
+# Expected: 201
+# @name listingZero
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Probe Zero Milk",
+  "sku": "SKU-Z-{{$timestamp}}",
+  "description": "Listed but shelf empty at opening",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 9000.00,
+  "sellingPrice": 8500.00
+}
+
+### 20 — Zero quantity, zero threshold — both legal (Q3/Q4)
+# Expected: 201 — "listed, counted, none on shelf" + "alert me only at zero"
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingZero.response.body.publicId}}",
+  "quantity": 0,
+  "lowStockThreshold": 0
+}
+
+### 21 — Close the store (the one closing path) then try to create stock
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 22 — Closed store: invisible even to the chain admin
+# Expected: 404 — title "Store not found" — the visibility gate beats authority
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
