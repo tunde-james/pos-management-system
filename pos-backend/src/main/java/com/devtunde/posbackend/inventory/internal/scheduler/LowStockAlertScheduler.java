@@ -4,6 +4,9 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.devtunde.posbackend.auth.api.UserAccountService;
 import com.devtunde.posbackend.common.api.EmailService;
 import com.devtunde.posbackend.common.api.email.LowStockAlert;
@@ -16,6 +19,8 @@ import com.devtunde.posbackend.store.api.dto.StoreApiResponse;
 
 @Component
 public class LowStockAlertScheduler {
+
+    private static final Logger log = LoggerFactory.getLogger(LowStockAlertScheduler.class);
 
     private final StoreService storeService;
     private final UserAccountService userAccountService;
@@ -42,7 +47,15 @@ public class LowStockAlertScheduler {
                 .toList();
 
         for (StoreApiResponse store : activeStores) {
-            alertStore(store);
+            try {
+                alertStore(store);
+            } catch (Exception ex) {
+                log.warn(
+                        "Low-stock alert failed for store {} ({}); continuing with the remaining stores",
+                        store.publicId(),
+                        store.brand(),
+                        ex);
+            }
         }
     }
 

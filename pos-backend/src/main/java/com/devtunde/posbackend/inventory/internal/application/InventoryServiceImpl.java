@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,6 +54,7 @@ public class InventoryServiceImpl implements InventoryService {
             ProductService productService,
             UserAccountService userAccountService,
             InventoryMapper inventoryMapper) {
+
         this.inventoryRepository = inventoryRepository;
         this.stockMovementRepository = stockMovementRepository;
         this.storeService = storeService;
@@ -64,11 +66,11 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public InventoryResponse createInventory(UUID storeId, InventoryCreateRequest request) {
+
         requireStore(storeId);
         productService.requireListing(storeId, request.productPublicId());
 
-        Optional<Inventory> existing =
-                inventoryRepository.findByStoreIdAndProductPublicId(storeId, request.productPublicId());
+        Optional<Inventory> existing = inventoryRepository.lockPair(storeId, request.productPublicId());
 
         if (existing.isPresent()) {
             Inventory inventory = existing.get();
@@ -85,36 +87,50 @@ public class InventoryServiceImpl implements InventoryService {
             inventory.setLowStockThreshold(request.lowStockThreshold());
             inventoryRepository.save(inventory);
             recordMovement(inventory, MovementType.ADJUSTMENT, request.quantity() - before, before, null);
+
             return inventoryMapper.toResponse(inventory);
         }
 
         Inventory inventory =
                 Inventory.create(storeId, request.productPublicId(), request.quantity(), request.lowStockThreshold());
-        inventoryRepository.save(inventory);
+        try {
+            inventoryRepository.saveAndFlush(inventory);
+        } catch (DataIntegrityViolationException ex) {
+            if (ex.getMessage() != null && ex.getMessage().contains("uk_inventories_store_product")) {
+                throw new InventoryAlreadyExistsException();
+            }
+            throw ex;
+        }
         recordMovement(inventory, MovementType.OPENING, request.quantity(), 0, null);
+
         return inventoryMapper.toResponse(inventory);
     }
 
     @Override
     @Transactional
     public InventoryResponse updateQuantity(UUID storeId, UUID productPublicId, StocktakeRequest request) {
+
         requireStore(storeId);
         productService.requireListing(storeId, productPublicId);
-        Inventory inventory = requireInventory(storeId, productPublicId);
+
+        Inventory inventory = requireInventoryForUpdate(storeId, productPublicId);
 
         int before = inventory.getQuantity();
         inventory.setQuantity(request.quantity());
         inventoryRepository.save(inventory);
         recordMovement(inventory, MovementType.ADJUSTMENT, request.quantity() - before, before, null);
+
         return inventoryMapper.toResponse(inventory);
     }
 
     @Override
     @Transactional
     public InventoryResponse updateThreshold(UUID storeId, UUID productPublicId, ThresholdUpdateRequest request) {
+
         requireStore(storeId);
         productService.requireListing(storeId, productPublicId);
-        Inventory inventory = requireInventory(storeId, productPublicId);
+
+        Inventory inventory = requireInventoryForUpdate(storeId, productPublicId);
 
         inventory.setLowStockThreshold(request.lowStockThreshold());
         inventoryRepository.save(inventory);
@@ -125,23 +141,28 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public InventoryResponse receiveStock(UUID storeId, UUID productPublicId, ReceivedRequest request) {
+
         requireStore(storeId);
         productService.requireListing(storeId, productPublicId);
-        Inventory inventory = requireInventory(storeId, productPublicId);
+
+        Inventory inventory = requireInventoryForUpdate(storeId, productPublicId);
 
         int before = inventory.getQuantity();
         inventory.setQuantity(before + request.quantity());
         inventoryRepository.save(inventory);
         recordMovement(inventory, MovementType.RECEIVED, request.quantity(), before, null);
+
         return inventoryMapper.toResponse(inventory);
     }
 
     @Override
     @Transactional
     public InventoryResponse reportDamage(UUID storeId, UUID productPublicId, DamageRequest request) {
+
         requireStore(storeId);
         productService.requireListing(storeId, productPublicId);
-        Inventory inventory = requireInventory(storeId, productPublicId);
+
+        Inventory inventory = requireInventoryForUpdate(storeId, productPublicId);
 
         if (request.quantity() > inventory.getQuantity()) {
             throw new InvalidStockAdjustmentException();
@@ -151,12 +172,14 @@ public class InventoryServiceImpl implements InventoryService {
         inventory.setQuantity(before - request.quantity());
         inventoryRepository.save(inventory);
         recordMovement(inventory, MovementType.DAMAGE, -request.quantity(), before, request.reason());
+
         return inventoryMapper.toResponse(inventory);
     }
 
     @Override
     @Transactional(readOnly = true)
     public InventoryResponse getInventory(UUID storeId, UUID productPublicId) {
+
         requireStore(storeId);
         productService.requireListing(storeId, productPublicId);
 
@@ -166,9 +189,10 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional(readOnly = true)
     public List<InventoryResponse> listInventory(UUID storeId) {
+
         requireStore(storeId);
 
-        return inventoryRepository.findByStoreIdAndArchivedAtIsNull(storeId).stream()
+        return inventoryRepository.findByStoreIdAndArchivedAtIsNullOrderByCreatedAtDesc(storeId).stream()
                 .map(inventoryMapper::toResponse)
                 .toList();
     }
@@ -176,11 +200,13 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional(readOnly = true)
     public LowStockResponse getLowStock(UUID storeId) {
+
         requireStore(storeId);
 
         List<LowStockItemResponse> low = inventoryRepository.findLowStockByStoreId(storeId).stream()
                 .map(this::toLowStockItem)
                 .toList();
+
         List<LowStockItemResponse> out = inventoryRepository.findOutOfStockByStoreId(storeId).stream()
                 .map(this::toLowStockItem)
                 .toList();
@@ -191,6 +217,7 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional(readOnly = true)
     public List<MovementResponse> getMovements(UUID storeId, UUID productPublicId) {
+
         requireStore(storeId);
 
         inventoryRepository
@@ -203,12 +230,19 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private Inventory requireInventory(UUID storeId, UUID productPublicId) {
+
         return inventoryRepository
                 .findByStoreIdAndProductPublicIdAndArchivedAtIsNull(storeId, productPublicId)
                 .orElseThrow(InventoryNotFoundException::new);
     }
 
+    private Inventory requireInventoryForUpdate(UUID storeId, UUID productPublicId) {
+
+        return inventoryRepository.lockActive(storeId, productPublicId).orElseThrow(InventoryNotFoundException::new);
+    }
+
     private StoreApiResponse requireStore(UUID storeId) {
+
         StoreApiResponse store = storeService.getStoreByPublicId(storeId);
 
         if (store.status() != StoreStatus.ACTIVE) {
@@ -226,6 +260,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private void recordMovement(Inventory inventory, MovementType type, int delta, int before, String reason) {
+
         UUID actor = userAccountService.currentUser().publicId();
 
         stockMovementRepository.save(StockMovement.of(
@@ -240,6 +275,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private LowStockItemResponse toLowStockItem(Inventory inventory) {
+
         return new LowStockItemResponse(
                 inventory.getProductPublicId(),
                 productService.productNameOf(inventory.getProductPublicId()),

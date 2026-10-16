@@ -10,7 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,14 +77,17 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     // ---------- personas ----------
 
     private String uniqueEmail() {
+
         return "ltest-" + UUID.randomUUID().toString().substring(0, 8) + "@devtunde.com";
     }
 
     private String uniqueStoreEmail() {
+
         return "store-" + UUID.randomUUID().toString().substring(0, 8) + "@devtunde.com";
     }
 
     private void signupUser(String email, String fullName) throws Exception {
+
         String body = """
                     {
                         "fullName": "%s",
@@ -99,6 +104,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     }
 
     private String loginForToken(String email) throws Exception {
+
         String body = """
                     {
                         "email": "%s",
@@ -119,6 +125,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     }
 
     private String publicIdOf(String email) throws Exception {
+
         String body = """
                     {
                         "email": "%s",
@@ -140,10 +147,12 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     }
 
     private void promoteToAdmin(String email) {
+
         jdbcTemplate.update("update users set role = 'ROLE_ADMIN' where email = ?", email);
     }
 
     private String adminToken() throws Exception {
+
         String email = uniqueEmail();
         signupUser(email, "Chain Admin");
         promoteToAdmin(email);
@@ -152,6 +161,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
 
     private String createStoreAsAdmin(String adminToken, String assignedPublicId, String brand, String contactEmail)
             throws Exception {
+
         String body = """
                     {
                         "brand": "%s",
@@ -180,6 +190,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     }
 
     private static final class ManagedStore {
+
         final String managerToken;
         final String managerEmail;
         final String storeId;
@@ -192,15 +203,18 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     }
 
     private ManagedStore seedStore(String brand) throws Exception {
+
         String email = uniqueEmail();
         signupUser(email, "Store Manager");
         String managerId = publicIdOf(email);
         String managerToken = loginForToken(email);
         String storeId = createStoreAsAdmin(adminToken(), managerId, brand, uniqueStoreEmail());
+
         return new ManagedStore(managerToken, email, storeId);
     }
 
     private String createCategoryAsAdmin(String name) throws Exception {
+
         MvcResult result = mockMvc.perform(post("/api/v1/categories")
                         .header("Authorization", "Bearer " + adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -215,11 +229,13 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     }
 
     private String uniqueSku() {
+
         return "SKU-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
 
     private String listProductAs(ManagedStore store, String categoryPublicId, String name, String sku)
             throws Exception {
+
         String body = """
                     {
                         "name": "%s",
@@ -248,6 +264,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
 
     private void createInventoryAs(String token, String storeId, String productPublicId, int quantity, int threshold)
             throws Exception {
+
         mockMvc.perform(post("/api/v1/stores/" + storeId + "/inventory")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -266,6 +283,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @Test
     @DisplayName("Delisting archives the stock row end to end — event, executor, registry")
     void delistArchivesStockRowEndToEnd() throws Exception {
+
         ManagedStore store = seedStore("Event Archive Store");
         String categoryPublicId = createCategoryAsAdmin("Event Archive Category");
         String productPublicId = listProductAs(store, categoryPublicId, "Archived Milk", uniqueSku());
@@ -289,6 +307,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @Test
     @DisplayName("The store inventory list filters archived rows at the DB level")
     void listFiltersArchivedRows() throws Exception {
+
         ManagedStore store = seedStore("Filter Store");
         String categoryPublicId = createCategoryAsAdmin("Filter Category");
         String keptId = listProductAs(store, categoryPublicId, "Kept Milk", uniqueSku());
@@ -378,6 +397,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @Test
     @DisplayName("The CHECK constraint rejects negative quantity even via direct SQL")
     void databaseRejectsNegativeQuantity() {
+
         DataAccessException ex = assertThrows(
                 DataAccessException.class,
                 () -> jdbcTemplate.update(
@@ -392,6 +412,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @Test
     @DisplayName("The ledger CHECK rejects any row where before + delta != after")
     void databaseRejectsIncoherentLedgerRow() {
+
         DataAccessException ex = assertThrows(
                 DataAccessException.class,
                 () -> jdbcTemplate.update(
@@ -408,6 +429,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @Test
     @DisplayName("The scan emails the store admin one digest: LOW and OUT items, healthy excluded")
     void scanAlertsStoreAdminForLowAndOutStock() throws Exception {
+
         ManagedStore store = seedStore("Scan Brand Store");
         String categoryPublicId = createCategoryAsAdmin("Scan Category");
         listProductAs(store, categoryPublicId, "Healthy Milk", uniqueSku());
@@ -439,6 +461,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @Test
     @DisplayName("The scan skips closed stores — the trading gate, applied to email")
     void scanSkipsClosedStores() throws Exception {
+
         ManagedStore alive = seedStore("Alive Scan Store");
         ManagedStore doomed = seedStore("Doomed Scan Store");
         String aliveCategory = createCategoryAsAdmin("Alive Scan Category");
@@ -463,6 +486,10 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
 
         verify(emailService, times(1))
                 .sendLowStockAlert(eq(alive.managerEmail), eq("Alive Scan Store"), org.mockito.ArgumentMatchers.any());
+
+        verify(emailService, never())
+                .sendLowStockAlert(
+                        eq(doomed.managerEmail), eq("Doomed Scan Store"), org.mockito.ArgumentMatchers.any());
     }
 
     // ---------- email fail-soft ----------
@@ -471,6 +498,7 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
     @DisplayName("SmtpEmailService fails soft when no mail host is configured")
     @SuppressWarnings("unchecked")
     void emailServiceFailsSoftWithoutMailHost() {
+
         ObjectProvider<JavaMailSender> provider = mock(ObjectProvider.class);
 
         when(provider.getIfAvailable()).thenReturn(null);
@@ -479,5 +507,30 @@ class InventoryLifecycleTests extends AbstractIntegrationTest {
 
         assertDoesNotThrow(() ->
                 service.sendLowStockAlert("boss@devtunde.com", "Any Store", new LowStockAlert(List.of(), List.of())));
+    }
+
+    @Test
+    @DisplayName("One store's failed email never starves the remaining stores")
+    void scanContinuesAfterOneStoreEmailFails() throws Exception {
+        ManagedStore failing = seedStore("First Failing Store");
+        ManagedStore reaching = seedStore("Second Reaching Store");
+        String categoryPublicId = createCategoryAsAdmin("Failing Scan Category");
+        String failingProductId = listProductAs(failing, categoryPublicId, "Failing Milk", uniqueSku());
+        String reachingProductId = listProductAs(reaching, categoryPublicId, "Reaching Milk", uniqueSku());
+        createInventoryAs(failing.managerToken, failing.storeId, failingProductId, 0, 10);
+        createInventoryAs(reaching.managerToken, reaching.storeId, reachingProductId, 0, 10);
+
+        doThrow(new RuntimeException("SMTP exploded"))
+                .when(emailService)
+                .sendLowStockAlert(
+                        eq(failing.managerEmail),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any());
+
+        assertDoesNotThrow(scheduler::scanAndAlert);
+
+        verify(emailService)
+                .sendLowStockAlert(
+                        eq(reaching.managerEmail), eq("Second Reaching Store"), org.mockito.ArgumentMatchers.any());
     }
 }

@@ -17,6 +17,18 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  mail:
+    properties:
+      mail:
+        smtp:
+          connectionTimeout: 5000
+          timeout: 10000
+          writerimeout: 10000
+
+management:
+  health:
+    mail:
+      enabled: false
 
 server:
   port: 4000

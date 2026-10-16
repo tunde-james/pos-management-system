@@ -1,5 +1,6 @@
 package com.devtunde.posbackend.inventory.internal.config;
 
+import java.time.ZoneId;
 import java.util.TimeZone;
 
 import org.springframework.context.annotation.Configuration;
@@ -23,6 +24,7 @@ public class InventoryAlertConfig implements SchedulingConfigurer {
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                scheduler::scanAndAlert, new CronTrigger(properties.cron(), TimeZone.getTimeZone(properties.zone())));
+                scheduler::scanAndAlert,
+                new CronTrigger(properties.cron(), TimeZone.getTimeZone(ZoneId.of(properties.zone()))));
     }
 }
