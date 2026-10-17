@@ -70,7 +70,12 @@ public class InventoryServiceImpl implements InventoryService {
         requireStore(storeId);
         productService.requireListing(storeId, request.productPublicId());
 
-        Optional<Inventory> existing = inventoryRepository.lockPair(storeId, request.productPublicId());
+        Optional<Inventory> existing =
+                inventoryRepository.findByStoreIdAndProductPublicId(storeId, request.productPublicId());
+
+        if (existing.isPresent()) {
+            existing = inventoryRepository.lockPair(storeId, request.productPublicId());
+        }
 
         if (existing.isPresent()) {
             Inventory inventory = existing.get();

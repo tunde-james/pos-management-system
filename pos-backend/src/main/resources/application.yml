@@ -23,7 +23,7 @@ spring:
         smtp:
           connectionTimeout: 5000
           timeout: 10000
-          writerimeout: 10000
+          writetimeout: 10000
 
 management:
   health:
