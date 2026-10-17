@@ -13,7 +13,7 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────────────
 
 if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && [[ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]]; then
-  BOLD=$(tput bold); DIM=$(tput dim); RESET=$(tput setaf 4)
+  BOLD=$(tput bold); DIM=$(tput dim); RESET=$(tput sgr0)
   BLUE=$(tput setaf 4); GREEN=$(tput setaf 2); YELLOW=$(tput setaf 3); RED=$(tput setaf 1)
 else
   BOLD=""; DIM=""; RESET=""; BLUE=""; GREEN=""; YELLOW=""; RED=""
@@ -254,7 +254,7 @@ write_env SPRING_MAIL_PORT "$SMTP_PORT"
 write_env SPRING_MAIL_USERNAME "$SMTP_USERNAME"
 write_env SPRING_MAIL_PASSWORD "$SMTP_PASSWORD"
 write_env SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH "true"
-write_env SPRING_MAIL_PROPERTIES_MAIL_STARTTLS_ENABLE "true"
+write_env SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE "true"
 write_env SPRING_MAIL_PROPERTIES_MAIL_SMTP_CONNECTIONTIMEOUT "5000"
 write_env SPRING_MAIL_PROPERTIES_MAIL_SMTP_TIMEOUT "10000"
 write_env SPRING_MAIL_PROPERTIES_MAIL_SMTP_WRITETIMEOUT "10000"
@@ -310,8 +310,9 @@ say "from now, fire once, then revert."
 if ! confirm "Run the live-fire test now?"; then
   note "Skipped — your email path is configured; the next 09:00 scan will use it."
 else
-  CRON_MIN=$(date -d "+2 minutes" +%M)
-  CRON_HOUR=$(date -d "+2 minutes" +%H)
+  LOWSTOCK_ZONE=$(_existing APP_INVENTORY_LOWSTOCK_ZONE || printf '%s' "Africa/Lagos")
+  CRON_MIN=$(TZ="$LOWSTOCK_ZONE" date -d "+2 minutes" +%M)
+  CRON_HOUR=$(TZ="$LOWSTOCK_ZONE" date -d "+2 minutes" +%H)
   write_env APP_INVENTORY_LOWSTOCK_CRON "0 $CRON_MIN $CRON_HOUR * * *"
   note "Cron set to 0 $CRON_MIN $CRON_HOUR — app restarts on the env change."
   docker compose up -d --force-recreate pos-backend >/dev/null 2>&1 || true
@@ -327,16 +328,16 @@ else
     HIS_LOGIN=$(curl -s -X POST "$API/auth/login" -H "Content-Type: application/json" \
       -d '{"email":"'"$RECIPIENT_EMAIL"'","password":"Password123!"}' || true)
     HIS_TOKEN=$(json_val "$HIS_LOGIN" accessToken)
+    HIS_ID=$(json_val "$HIS_LOGIN" publicId)
     ADMIN_LOGIN=$(curl -s -X POST "$API/auth/login" -H "Content-Type: application/json" \
       -d '{"email":"admin@devtunde.com","password":"Password123!"}' || true)
     ADMIN_TOKEN=$(json_val "$ADMIN_LOGIN" accessToken)
     ADMIN_ID=$(json_val "$ADMIN_LOGIN" publicId)
-    if [[ -n "$HIS_TOKEN" && -n "$ADMIN_TOKEN" && -n "$ADMIN_ID" ]]; then
+    if [[ -n "$HIS_TOKEN" && -n "$HIS_ID" && -n "$ADMIN_TOKEN" && -n "$ADMIN_ID" ]]; then
       STORE=$(curl -s -X POST "$API/stores" -H "Content-Type: application/json" \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -d '{"brand":"Wizard Smoke Store '$RANDOM'","storeType":"KIOSK","storeAdminPublicId":"'"$ADMIN_ID"'","contact":{"address":"Wizard Way","phone":"08012345678","email":"wizard-smoke-'$RANDOM'@devtunde.com"}}' || true)
+        -d '{"brand":"Wizard Smoke Store '$RANDOM'","storeType":"KIOSK","storeAdminPublicId":"'"$HIS_ID"'","contact":{"address":"Wizard Way","phone":"08012345678","email":"wizard-smoke-'$RANDOM'@devtunde.com"}}' || true)
       STORE_ID=$(json_val "$STORE" publicId)
-      HIS_ID=$(json_val "$HIS_LOGIN" publicId)
       CAT=$(curl -s -X POST "$API/categories" -H "Content-Type: application/json" \
         -H "Authorization: Bearer $ADMIN_TOKEN" -d '{"name":"Wizard Smoke Category '$RANDOM'"}' || true)
       CAT_ID=$(json_val "$CAT" publicId)
