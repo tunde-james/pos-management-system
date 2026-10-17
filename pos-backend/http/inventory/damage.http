@@ -1,0 +1,285 @@
+# =============================================================================
+# Inventory — DAMAGE REPORT (VS Code REST Client) — POST /api/v1/stores/{storeId}/inventory/products/{productPublicId}/damage (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: stock left the shelf without being sold (ticket 0012, Q5). You
+# send the damaged count (>= 1); the service subtracts it and records a
+# DAMAGE movement. The reason is optional context, capped at 500 chars.
+# Damaging more than the shelf holds is a STATE error (400 "Invalid stock
+# adjustment"), not a field error — the payload is well-formed, the world
+# isn't. Guard order: store visibility (404 unknown/closed), identity (403),
+# listing gate (404 "Product not found"), then the row (404 "Inventory not
+# found").
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 damaged, 400 invalid payload or over-damage,
+#     401 no/invalid token, 403 wrong identity, 404 unknown/closed store or
+#     unlisted product.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Damage Probe Manager",
+  "email": "probe-dmg-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234602"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Damage Probe Store {{$timestamp}}",
+  "description": "Probe store for damage reports",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "damage-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Damage Category {{$timestamp}}"
+}
+
+### 6 — Setup: list a product in the store
+# Expected: 201
+# @name listingOk
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Damage Milk",
+  "sku": "SKU-DM-{{$timestamp}}",
+  "description": "Milk for damage probes",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: create stock (100 on shelf, threshold 10)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Five crates smashed in transit: damage WITH a reason
+# Expected: 200 — quantity 95; DAMAGE movement (before 100, after 95, reason
+# carried into the ledger)
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 5,
+  "reason": "Crates crushed by a fallen pallet in the stockroom"
+}
+
+### 9 — Five more spoiled: damage WITHOUT a reason — reason is optional
+# Expected: 200 — quantity 90; DAMAGE movement with reason null
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 5
+}
+
+### 10 — Over-damage: report 100 damaged with only 90 on the shelf
+# Expected: 400 — title "Invalid stock adjustment": the two-layer invariant
+# (payload shape is fine; the state-dependent rule fires — Q3)
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 100,
+  "reason": "The whole pallet went bad"
+}
+
+### 11 — Zero-unit damage
+# Expected: 400 — field error on quantity (@Min(1)): nothing was damaged
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 0
+}
+
+### 12 — Negative damage
+# Expected: 400 — field error on quantity; damage never adds stock
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": -3
+}
+
+### 13 — Reason over the 500-char cap
+# Expected: 400 — field error on reason (@Size(max = 500)); 501 a's overflows
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 1,
+  "reason": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+### 14 — No Authorization header
+# Expected: 401
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+
+{
+  "quantity": 5
+}
+
+### 15 — Garbage token
+# Expected: 401
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer not-a-real-jwt
+
+{
+  "quantity": 5
+}
+
+### 16 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 17 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 18 — Report damage as a regular user
+# Expected: 403 — identity gate
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+{
+  "quantity": 5
+}
+
+### 19 — Unknown product: the listing gate fires first
+# Expected: 404 — title "Product not found"
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/11111111-1111-1111-1111-111111111111/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 5
+}
+
+### 20 — Unknown store
+# Expected: 404 — title "Store not found"
+POST {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "quantity": 5
+}
+
+### 21 — Close the store, then report damage
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 22 — Closed store: gone even for its own admin
+# Expected: 404 — title "Store not found"
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 5
+}

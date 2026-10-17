@@ -26,6 +26,8 @@ services:
       dockerfile: Dockerfile
     image: pos-backend:latest
     container_name: pos-backend
+    env_file:
+      - .env
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${POS_DB_NAME}
       SPRING_DATASOURCE_USERNAME: ${POS_DB_USER}

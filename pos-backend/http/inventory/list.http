@@ -1,0 +1,276 @@
+# =============================================================================
+# Inventory — LIST requests (VS Code REST Client) — GET /api/v1/stores/{storeId}/inventory (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: the store's stock list, hot rows only — archived (delisted)
+# pairs are filtered out (ticket 0012, Q2 B). Guard order: store visibility
+# (404 unknown/closed), identity (403 foreign admin on a live store). An
+# empty list is a 200 with [], never a 404.
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Request 17 (delist filtering) races the ASYNC archive listener: the
+#     delist's 204 returns before the listener archives the row. Give it a
+#     few seconds before sending 18, or re-send 18 until the row disappears.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 list (possibly empty), 401 no/invalid token,
+#     403 wrong identity, 404 unknown/closed store.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "List Probe Manager",
+  "email": "probe-list-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234593"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "List Probe Store {{$timestamp}}",
+  "description": "Probe store for inventory lists",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "list-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "List Category {{$timestamp}}"
+}
+
+### 6 — Setup: list the first product
+# Expected: 201
+# @name listingOne
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "List Milk One",
+  "sku": "SKU-L1-{{$timestamp}}",
+  "description": "First listed product",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: stock the first product
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOne.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Setup: list the second product
+# Expected: 201
+# @name listingTwo
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "List Milk Two",
+  "sku": "SKU-L2-{{$timestamp}}",
+  "description": "Second listed product",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 7000.00,
+  "sellingPrice": 6500.00
+}
+
+### 9 — Setup: stock the second product
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingTwo.response.body.publicId}}",
+  "quantity": 40,
+  "lowStockThreshold": 5
+}
+
+### 10 — Read the list: both hot rows, newest first
+# Expected: 200 — array with 2 items (List Milk Two at [0], List Milk One at [1])
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 11 — No Authorization header
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+
+### 12 — Garbage token
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Authorization: Bearer not-a-real-jwt
+
+### 13 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 14 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 15 — Read the list as a regular user
+# Expected: 403 — identity gate
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 16 — Unknown store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 17 — Delist the first product (the one closing path)
+# Expected: 204 — publishes the delist event; the listener archives async
+DELETE {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}/{{listingOne.response.body.publicId}}
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 18 — Archived rows disappear from the hot list (give the async listener
+# a few seconds — see the header note)
+# Expected: 200 — array with 1 item: List Milk Two only
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 19 — Setup: signup + seat a second manager in an empty store
+# Expected: 201
+# @name mgr2Signup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Empty Shelf Manager",
+  "email": "probe-empty-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234594"
+}
+
+### 20 — Setup: login the empty-shelf manager
+# Expected: 200
+# @name mgr2Login
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgr2Signup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 21 — Setup: create her store (no listings, no stock)
+# Expected: 201
+# @name store2Ok
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Empty Shelf Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{mgr2Login.response.body.user.publicId}}",
+  "contact": {
+    "address": "3 Elsewhere Ave",
+    "phone": "08087654321",
+    "email": "empty-shelf-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 22 — An empty store lists no rows — empty is data, not an error
+# Expected: 200 — []
+GET {{baseUrl}}/stores/{{store2Ok.response.body.publicId}}/inventory
+Authorization: Bearer {{mgr2Login.response.body.accessToken}}
+
+### 23 — Close the first store, then read its list
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 24 — Closed store: the list is gone with the store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}

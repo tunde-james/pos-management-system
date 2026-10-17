@@ -3,14 +3,10 @@ package com.devtunde.posbackend.product.internal.application;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
- import
- com.devtunde.posbackend.store.api.StoreStatus;
-   import
- com.devtunde.posbackend.store.api.exception.StoreNotFoundException;
 
 import com.devtunde.posbackend.auth.api.UserAccountService;
 import com.devtunde.posbackend.auth.api.UserRole;
@@ -21,6 +17,7 @@ import com.devtunde.posbackend.product.api.dto.ProductMasterResponse;
 import com.devtunde.posbackend.product.api.dto.ProductMasterUpdateRequest;
 import com.devtunde.posbackend.product.api.dto.ProductRequest;
 import com.devtunde.posbackend.product.api.dto.ProductResponse;
+import com.devtunde.posbackend.product.api.event.StoreListingDelistedEvent;
 import com.devtunde.posbackend.product.api.exception.EmptyPatchException;
 import com.devtunde.posbackend.product.api.exception.ProductAlreadyListedException;
 import com.devtunde.posbackend.product.api.exception.ProductNotFoundException;
@@ -33,7 +30,9 @@ import com.devtunde.posbackend.product.internal.persistence.CategoryRepository;
 import com.devtunde.posbackend.product.internal.persistence.ProductRepository;
 import com.devtunde.posbackend.product.internal.persistence.StoreProductRepository;
 import com.devtunde.posbackend.store.api.StoreService;
+import com.devtunde.posbackend.store.api.StoreStatus;
 import com.devtunde.posbackend.store.api.dto.StoreApiResponse;
+import com.devtunde.posbackend.store.api.exception.StoreNotFoundException;
 
 @Service
 public class ProductServiceImpl implements ProductService {
@@ -44,6 +43,7 @@ public class ProductServiceImpl implements ProductService {
     private final StoreService storeService;
     private final UserAccountService userAccountService;
     private final ProductMapper productMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ProductServiceImpl(
             ProductRepository productRepository,
@@ -51,13 +51,15 @@ public class ProductServiceImpl implements ProductService {
             StoreProductRepository storeProductRepository,
             StoreService storeService,
             UserAccountService userAccountService,
-            ProductMapper productMapper) {
+            ProductMapper productMapper,
+            ApplicationEventPublisher eventPublisher) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
         this.storeProductRepository = storeProductRepository;
         this.storeService = storeService;
         this.userAccountService = userAccountService;
         this.productMapper = productMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -128,6 +130,8 @@ public class ProductServiceImpl implements ProductService {
                 .orElseThrow(ProductNotFoundException::new);
 
         storeProductRepository.delete(listing);
+
+        eventPublisher.publishEvent(new StoreListingDelistedEvent(storeId, productPublicId));
     }
 
     @Override
@@ -143,6 +147,32 @@ public class ProductServiceImpl implements ProductService {
         productMapper.updateMaster(request, master);
 
         return productMapper.toMasterResponse(productRepository.save(master));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public void requireListing(UUID storeId, UUID productPublicId) {
+        storeProductRepository
+                .findByStoreIdAndProductPublicId(storeId, productPublicId)
+                .orElseThrow(ProductNotFoundException::new);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isListed(UUID storeId, UUID productPublicId) {
+
+        return storeProductRepository
+                .findByStoreIdAndProductPublicId(storeId, productPublicId)
+                .isPresent();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String productNameOf(UUID productPublicId) {
+        return productRepository
+                .findByPublicId(productPublicId)
+                .orElseThrow(ProductNotFoundException::new)
+                .getName();
     }
 
     private StoreApiResponse requireStore(UUID storeId) {

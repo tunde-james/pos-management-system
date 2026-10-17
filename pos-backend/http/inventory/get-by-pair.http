@@ -1,0 +1,264 @@
+# =============================================================================
+# Inventory — GET BY PAIR (VS Code REST Client) — GET /api/v1/stores/{storeId}/inventory/products/{productPublicId} (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: reading one item of stock is pair-addressed — no inventory id on
+# the wire (ticket 0012, Q5). Guard order: store visibility first (404 for
+# unknown/closed stores), then identity (403 for the wrong store admin — a
+# live store is never hidden from a foreign admin behind 404), then the
+# listing gate (404 "Product not found"), then the row (404 "Inventory not
+# found" — listed but never stocked).
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 found, 401 no/invalid token, 403 wrong identity,
+#     404 unknown/closed store, unlisted product, or listed-but-unstocked pair.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Pair Probe Manager",
+  "email": "probe-pair-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234591"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Pair Probe Store {{$timestamp}}",
+  "description": "Probe store for pair reads",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "pair-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Pair Category {{$timestamp}}"
+}
+
+### 6 — Setup: list a product in the store
+# Expected: 201
+# @name listingOk
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Pair Milk",
+  "sku": "SKU-P-{{$timestamp}}",
+  "description": "Milk for pair reads",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: create stock
+# Expected: 201
+# @name stockCreate
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — Read the pair back
+# Expected: 200 — quantity 100, lowStockThreshold 10
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 9 — No Authorization header
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+
+### 10 — Garbage token
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Authorization: Bearer not-a-real-jwt
+
+### 11 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 12 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 13 — Read as a regular user
+# Expected: 403 — identity gate
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 14 — Setup: signup a SECOND manager (a foreign store's admin)
+# Expected: 201
+# @name mgr2Signup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Foreign Pair Manager",
+  "email": "probe-pair-mgr2-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234592"
+}
+
+### 15 — Setup: login the foreign manager
+# Expected: 200
+# @name mgr2Login
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgr2Signup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 16 — Setup: give the foreign manager her own store
+# Expected: 201
+# @name store2Ok
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Foreign Pair Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{mgr2Login.response.body.user.publicId}}",
+  "contact": {
+    "address": "3 Elsewhere Ave",
+    "phone": "08087654321",
+    "email": "foreign-pair-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 17 — Foreign store admin reads a LIVE store she doesn't own
+# Expected: 403 — live-store identity failure, never 404: the store exists,
+# she simply isn't its admin (product-module precedent)
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Authorization: Bearer {{mgr2Login.response.body.accessToken}}
+
+### 18 — Unknown product: the listing gate fires first
+# Expected: 404 — title "Product not found"
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/11111111-1111-1111-1111-111111111111
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 19 — Setup: list a second product but never stock it
+# Expected: 201
+# @name listingUnstocked
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Unstocked Milk",
+  "sku": "SKU-U-{{$timestamp}}",
+  "description": "Listed, shelf never counted",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 8000.00,
+  "sellingPrice": 7500.00
+}
+
+### 20 — Listed but unstocked: two different 404s, one gate story
+# Expected: 404 — title "Inventory not found" (distinct from "Product not found")
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingUnstocked.response.body.publicId}}
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 21 — Unknown store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory/products/{{listingOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 22 — Close the store, then read the pair
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 23 — Closed store: gone even for its own admin
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}

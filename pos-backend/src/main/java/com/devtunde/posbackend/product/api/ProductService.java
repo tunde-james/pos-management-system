@@ -22,4 +22,10 @@ public interface ProductService {
     void delistProduct(UUID storeId, UUID productPublicId);
 
     ProductMasterResponse updateMaster(UUID productPublicId, ProductMasterUpdateRequest request);
+
+    void requireListing(UUID storeId, UUID productPublicId);
+
+    boolean isListed(UUID storeId, UUID productPublicId);
+
+    String productNameOf(UUID productPublicId);
 }

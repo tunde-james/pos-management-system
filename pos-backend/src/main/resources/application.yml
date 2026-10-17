@@ -17,6 +17,18 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  mail:
+    properties:
+      mail:
+        smtp:
+          connectionTimeout: 5000
+          timeout: 10000
+          writetimeout: 10000
+
+management:
+  health:
+    mail:
+      enabled: false
 
 server:
   port: 4000
@@ -47,3 +59,7 @@ app:
       window: 1m
     refresh:
       ttl: 7d
+  inventory:
+    low-stock:
+      cron: '0 0 9 * * *'
+      zone: 'Africa/Lagos'

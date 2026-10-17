@@ -1,0 +1,274 @@
+# =============================================================================
+# Inventory — MOVEMENTS LEDGER (VS Code REST Client) — GET /api/v1/stores/{storeId}/inventory/products/{productPublicId}/movements (STORE ADMIN or ADMIN)
+# =============================================================================
+# Semantics: the pair's full audit trail, chronological (oldest first), no
+# pagination (ticket 0012, Q2 B). Every stock mutation writes exactly one
+# row; alerting config (threshold) writes none. Movements are system-
+# authored: the client never sends type/delta/before/after. The read is
+# ARCHIVE-BLIND: after a delist archives the hot row, the ledger stays
+# readable — history is the institutional memory that survives. The
+# delist's async archive never races this read, by design.
+#
+# How to run:
+#   1. Start the backend: `docker compose up -d --build` — http://localhost:4000
+#   2. Click the "Send Request" CodeLens above any request, IN ORDER, in one
+#      sitting (captures are session-scoped).
+#
+# Prerequisites (admin persona):
+#   Signup admin@devtunde.com with Password123! once, then promote in MySQL:
+#     update users set role = 'ROLE_ADMIN' where email = 'admin@devtunde.com';
+#
+# Notes:
+#   - All data is FAKE (devtunde.com emails, Nigerian numbers).
+#   - The automated suites: InventoryApiTests, InventoryLifecycleTests.
+#   - Re-runnable: manager, brand, category, SKU and contact emails are minted
+#     with {{$timestamp}} — no 409 collisions with prior runs.
+#   - Access tokens expire after 15 MINUTES. If tokened requests suddenly 401,
+#     re-send the SETUP requests from the top.
+#   - REST Client captures die on file/VS Code reopen — re-send the setup
+#     requests from the top; never continue on a dead capture.
+#   - Expected codes: 200 ledger (never 404 for a stocked pair, even after
+#     delist), 401 no/invalid token, 403 wrong identity, 404 unknown/closed
+#     store or listed-but-unstocked pair.
+# =============================================================================
+
+@baseUrl = http://localhost:4000/api/v1
+@authUrl = http://localhost:4000/api/v1/auth
+
+### 1 — Setup: login the admin persona
+# Expected: 200
+# @name adminLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: signup the store manager (minted fresh each run)
+# Expected: 201
+# @name mgrSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Movements Probe Manager",
+  "email": "probe-mvmt-mgr-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234603"
+}
+
+### 3 — Setup: login the manager
+# Expected: 200
+# @name mgrLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "{{mgrSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: create the store
+# Expected: 201
+# @name storeOk
+POST {{baseUrl}}/stores
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "brand": "Movements Probe Store {{$timestamp}}",
+  "description": "Probe store for the ledger",
+  "storeType": "BRANCH",
+  "storeAdminPublicId": "{{mgrLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "12 Market Road, Lagos",
+    "phone": "08012345678",
+    "email": "movements-probe-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: create a category
+# Expected: 201
+# @name catOk
+POST {{baseUrl}}/categories
+Content-Type: application/json
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+{
+  "name": "Movements Category {{$timestamp}}"
+}
+
+### 6 — Setup: list a product in the store
+# Expected: 201
+# @name listingOk
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Movements Milk",
+  "sku": "SKU-MV-{{$timestamp}}",
+  "description": "Milk for ledger probes",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 7 — Setup: create stock — the ledger's first row (OPENING 0 -> 100)
+# Expected: 201
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "productPublicId": "{{listingOk.response.body.publicId}}",
+  "quantity": 100,
+  "lowStockThreshold": 10
+}
+
+### 8 — A delivery lands (RECEIVED +50 -> 150)
+# Expected: 200 — quantity 150
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/received
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 50
+}
+
+### 9 — Five crates spoil (DAMAGE −5 -> 145)
+# Expected: 200 — quantity 145
+POST {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/damage
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 5,
+  "reason": "Cold chain broke overnight"
+}
+
+### 10 — A count says 60 (ADJUSTMENT −85 -> 60)
+# Expected: 200 — quantity 60
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "quantity": 60
+}
+
+### 11 — Read the ledger: the pair's whole life story, chronological
+# Expected: 200 — bare array of 4 rows: [0] OPENING (delta 100, before 0,
+# after 100), [1] RECEIVED (delta 50, before 100, after 150), [2] DAMAGE
+# (delta −5, before 150, after 145, reason carried), [3] ADJUSTMENT
+# (delta −85, before 145, after 60)
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 12 — Re-tune the threshold (alerting config — NOT a stock mutation)
+# Expected: 200 — lowStockThreshold 15; quantity 60 untouched
+PUT {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/threshold
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "lowStockThreshold": 15
+}
+
+### 13 — The ledger is unchanged: thresholds write no movements (Q3 — every
+# STOCK mutation records; configuration does not)
+# Expected: 200 — still exactly 4 rows
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 14 — No Authorization header
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+
+### 15 — Garbage token
+# Expected: 401
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer not-a-real-jwt
+
+### 16 — Setup: signup the regular persona (fixed — she never holds a seat)
+# Expected: 201 (409 if she already exists — either way the account exists)
+# @name regularSignup
+POST {{authUrl}}/signup
+Content-Type: application/json
+
+{
+  "fullName": "Bola Storeless",
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348031234571"
+}
+
+### 17 — Setup: login the regular persona (fixed — she never holds a seat)
+# Expected: 200
+# @name regularLogin
+POST {{authUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "bola.storeless@devtunde.com",
+  "password": "Password123!"
+}
+
+### 18 — Read the ledger as a regular user
+# Expected: 403 — identity gate
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer {{regularLogin.response.body.accessToken}}
+
+### 19 — Unknown store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/22222222-2222-2222-2222-222222222222/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 20 — Setup: list a second product but never stock it
+# Expected: 201
+# @name listingUnstocked
+POST {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}
+Content-Type: application/json
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+{
+  "name": "Unstocked Movements Milk",
+  "sku": "SKU-MU-{{$timestamp}}",
+  "description": "Listed, shelf never counted",
+  "brand": "DairyCo",
+  "image": "https://cdn.devtunde.com/milk.png",
+  "categoryPublicId": "{{catOk.response.body.publicId}}",
+  "mrp": 8000.00,
+  "sellingPrice": 7500.00
+}
+
+### 21 — Listed but unstocked: no history to read
+# Expected: 404 — title "Inventory not found"
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingUnstocked.response.body.publicId}}/movements
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 22 — Delist the product (the one closing path; the async listener
+# archives the hot row — but the ledger read below ignores archived state)
+# Expected: 204
+DELETE {{baseUrl}}/products/store/{{storeOk.response.body.publicId}}/{{listingOk.response.body.publicId}}
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 23 — The ledger survives the delist — archive hides the hot row, never
+# the history (Q2 B: the audit story)
+# Expected: 200 — still the 4 rows; the read is archive-blind by design
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}
+
+### 24 — Close the store, then read the ledger
+# Expected: 204
+DELETE {{baseUrl}}/stores/{{storeOk.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 25 — Closed store: the ledger is gone with the store
+# Expected: 404 — title "Store not found"
+GET {{baseUrl}}/stores/{{storeOk.response.body.publicId}}/inventory/products/{{listingOk.response.body.publicId}}/movements
+Authorization: Bearer {{mgrLogin.response.body.accessToken}}

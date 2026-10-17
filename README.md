@@ -66,6 +66,13 @@ cd pos-backend
 ./mvnw spring-boot:run
 ```
 
-Configuration lives in `pos-backend/src/main/resources/application.properties`
-(database URL/credentials, JWT secret, payment keys). A `.env`/`.env.example` pair is
-introduced once Docker is wired.
+Configuration lives in `pos-backend/src/main/resources/application.yml`
+(database URL/credentials, JWT secret, SMTP relay). **Docker Compose requires a
+local `.env` file** — create it from the tracked template before starting the
+stack:
+
+```bash
+cp .env.example .env
+```
+
+Set the required values in `.env` before running `docker compose up`.
