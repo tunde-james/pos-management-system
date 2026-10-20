@@ -32,8 +32,11 @@
 		<jjwt.version>0.12.6</jjwt.version>
 		<bouncycastle.version>1.81</bouncycastle.version>
 		<!-- annotationProcessorPaths ignore dependencyManagement, so versions are pinned here. -->
-		<!-- lombok must match the version Boot 4.1.1 manages (1.18.46) to avoid duplicate processor versions. -->
-		<lombok.version>1.18.46</lombok.version>
+		<!-- 1.18.48, not Boot 4.1.1's managed 1.18.46: 1.18.46 emitted empty constructor
+		     bodies (@NoArgsConstructor) on full clean builds under Oracle JDK 25.0.4.1
+		     when MapStruct co-runs, producing ClassFormatError "Invalid method Code length 0".
+		     The property keeps dependency + processor path on one version, so no duplicate processors. -->
+		<lombok.version>1.18.48</lombok.version>
 		<mapstruct.version>1.6.3</mapstruct.version>
 		<lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
 		<stripe.version>30.1.0</stripe.version>
