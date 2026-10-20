@@ -63,3 +63,5 @@ app:
     low-stock:
       cron: '0 0 9 * * *'
       zone: 'Africa/Lagos'
+  employee:
+    email-domain: devtunde.com
