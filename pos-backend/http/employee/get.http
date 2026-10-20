@@ -1,0 +1,207 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Employee API — get one (GET /api/v1/stores/{storeId}/employees/{employeePublicId})
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack rebuilt with the Employee module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - Company email domain in the dev stack: devtunde.com
+#
+# `# Expected:` labels the status code each request proves.
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1. Chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2. Mint the store's seat admin
+# @name seatSignup
+# Expected: 201 (409 on a same-second re-run — also fine)
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Seat Admin",
+  "email": "emp-get-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 3. Seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4. Chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Employee Get Probe {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345678",
+    "email": "emp-get-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5. Hire a cashier to read back
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Cashier",
+  "email": "emp-get-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 6. Seat admin reads the employment — same shape as the hire body
+# Expected: 200 (publicId matches the hire; user.email matches)
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{hire.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+
+### 7. Chain admin reads it too — dual gate on reads
+# Expected: 200
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{hire.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 8. Unknown employment id: 404
+# Expected: 404
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+
+### 9. Unknown store: 404 — dead stores stay hidden
+# Expected: 404
+GET {{baseUrl}}/api/v1/stores/00000000-0000-0000-0000-000000000000/employees/{{hire.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 10. Terminate the employment (the one door)
+# Expected: 204
+DELETE {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{hire.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+
+### 11. A terminated employment reads as 404 — dead is dead
+# Expected: 404
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{hire.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+
+### 12. Mint a SECOND store's seat admin (to prove store scoping)
+# @name otherSeatSignup
+# Expected: 201 (409 on a same-second re-run — also fine)
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Other Seat Admin",
+  "email": "emp-get-other-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 13. Other seat admin logs in
+# @name otherSeatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{otherSeatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 14. Chain admin creates their store
+# @name otherStore
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Employee Get Other Probe {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{otherSeatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Other Way",
+    "phone": "08012345678",
+    "email": "emp-get-other-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 15. Re-hire in the FIRST store (a fresh era for the same account — Door 3)
+# @name rehire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Cashier",
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "MANAGER"
+}
+
+### 16. The OTHER store's seat admin cannot read it: 403
+# Expected: 403
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{rehire.response.body.publicId}}
+Authorization: Bearer {{otherSeatLogin.response.body.accessToken}}
+
+### 17. Mint a regular user
+# @name nobody
+# Expected: 201 (409 on a same-second re-run — also fine)
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Nobody",
+  "email": "emp-get-nobody-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 18. Nobody logs in
+# @name nobodyLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{nobody.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 19. Regular user cannot read a roster they don't own: 403
+# Expected: 403
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{rehire.response.body.publicId}}
+Authorization: Bearer {{nobodyLogin.response.body.accessToken}}
+
+### 20. No token at all: 401
+# Expected: 401
+GET {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees/{{rehire.response.body.publicId}}
