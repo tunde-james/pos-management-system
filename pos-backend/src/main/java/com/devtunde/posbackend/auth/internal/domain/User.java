@@ -1,6 +1,7 @@
 package com.devtunde.posbackend.auth.internal.domain;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 import jakarta.persistence.Column;
@@ -13,6 +14,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -101,7 +103,7 @@ public class User {
     public static User register(String fullName, String email, String phone, String passwordHash) {
         User user = new User();
         user.fullName = fullName;
-        user.email = email;
+        user.email = email.toLowerCase(Locale.ROOT);
         user.phone = phone;
         user.passwordHash = passwordHash;
 

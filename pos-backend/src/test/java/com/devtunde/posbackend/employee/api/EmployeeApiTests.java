@@ -395,6 +395,18 @@ class EmployeeApiTests extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("A work email with upper-case domain letters is accepted: 201")
+    void hireWithMixedCaseWorkDomainReturns201() throws Exception {
+
+        StoreFixture store = managedStore();
+
+        MvcResult result = hireAs(
+                store.seatToken(), store.storeId(), hireBody("chidi.mixed@" + WORK_DOMAIN.toUpperCase(), "CASHIER"));
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(201);
+    }
+
+    @Test
     @DisplayName("An invalid job title (CEO) is refused: 400")
     void hireWithInvalidJobTitleReturns400() throws Exception {
 

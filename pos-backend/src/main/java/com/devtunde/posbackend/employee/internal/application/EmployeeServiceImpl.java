@@ -57,7 +57,10 @@ public class EmployeeServiceImpl implements EmployeeService {
 
         requireStore(storeId);
 
-        if (!request.email().endsWith("@" + properties.emailDomain())) {
+        String email = request.email();
+        String domain = email.substring(email.lastIndexOf('@') + 1);
+
+        if (!domain.equalsIgnoreCase(properties.emailDomain())) {
             throw new InvalidWorkEmailException();
         }
 
@@ -71,7 +74,6 @@ public class EmployeeServiceImpl implements EmployeeService {
         StoreEmployee employment = StoreEmployee.create(storeId, user.publicId(), request.jobTitle());
 
         try {
-
             storeEmployeeRepository.saveAndFlush(employment);
         } catch (DataIntegrityViolationException ex) {
             if (ex.getMessage() != null && ex.getMessage().contains("uk_store_employees_active_user")) {
