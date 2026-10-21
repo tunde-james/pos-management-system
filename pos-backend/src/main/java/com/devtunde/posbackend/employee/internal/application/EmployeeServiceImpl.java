@@ -3,24 +3,19 @@ package com.devtunde.posbackend.employee.internal.application;
 import java.util.List;
 import java.util.UUID;
 
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.devtunde.posbackend.auth.api.UserAccountService;
-import com.devtunde.posbackend.auth.api.UserProvisioningService;
 import com.devtunde.posbackend.auth.api.UserRole;
-import com.devtunde.posbackend.auth.api.dto.UserProvisioningRequest;
 import com.devtunde.posbackend.auth.api.dto.UserViewResponse;
+import com.devtunde.posbackend.auth.api.exception.UserProvisioningRaceException;
 import com.devtunde.posbackend.employee.api.EmployeeJobTitle;
 import com.devtunde.posbackend.employee.api.EmployeeService;
 import com.devtunde.posbackend.employee.api.dto.EmployeeHireRequest;
 import com.devtunde.posbackend.employee.api.dto.EmployeeResponse;
-import com.devtunde.posbackend.employee.api.exception.EmployeeAlreadyEmployedException;
 import com.devtunde.posbackend.employee.api.exception.EmployeeNotFoundException;
-import com.devtunde.posbackend.employee.api.exception.InvalidWorkEmailException;
-import com.devtunde.posbackend.employee.internal.config.EmployeeProperties;
 import com.devtunde.posbackend.employee.internal.domain.StoreEmployee;
 import com.devtunde.posbackend.employee.internal.persistence.StoreEmployeeRepository;
 import com.devtunde.posbackend.store.api.StoreService;
@@ -34,21 +29,18 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final StoreEmployeeRepository storeEmployeeRepository;
     private final StoreService storeService;
     private final UserAccountService userAccountService;
-    private final UserProvisioningService userProvisioningService;
-    private final EmployeeProperties properties;
+    private final EmployeeHireRunner hireRunner;
 
     public EmployeeServiceImpl(
             StoreEmployeeRepository storeEmployeeRepository,
             StoreService storeService,
             UserAccountService userAccountService,
-            UserProvisioningService userProvisioningService,
-            EmployeeProperties properties) {
+            EmployeeHireRunner hireRunner) {
 
         this.storeEmployeeRepository = storeEmployeeRepository;
         this.storeService = storeService;
         this.userAccountService = userAccountService;
-        this.userProvisioningService = userProvisioningService;
-        this.properties = properties;
+        this.hireRunner = hireRunner;
     }
 
     @Override
@@ -57,32 +49,11 @@ public class EmployeeServiceImpl implements EmployeeService {
 
         requireStore(storeId);
 
-        String email = request.email();
-        String domain = email.substring(email.lastIndexOf('@') + 1);
-
-        if (!domain.equalsIgnoreCase(properties.emailDomain())) {
-            throw new InvalidWorkEmailException();
-        }
-
-        UserViewResponse user = userProvisioningService.provision(
-                new UserProvisioningRequest(request.fullName(), request.email(), request.password(), request.phone()));
-
-        if (storeEmployeeRepository.existsByUserPublicIdAndTerminatedAtIsNull(user.publicId())) {
-            throw new EmployeeAlreadyEmployedException();
-        }
-
-        StoreEmployee employment = StoreEmployee.create(storeId, user.publicId(), request.jobTitle());
-
         try {
-            storeEmployeeRepository.saveAndFlush(employment);
-        } catch (DataIntegrityViolationException ex) {
-            if (ex.getMessage() != null && ex.getMessage().contains("uk_store_employees_active_user")) {
-                throw new EmployeeAlreadyEmployedException();
-            }
-            throw ex;
+            return hireRunner.hire(storeId, request);
+        } catch (UserProvisioningRaceException ex) {
+            return hireRunner.hire(storeId, request);
         }
-
-        return toResponse(employment, user);
     }
 
     @Override
