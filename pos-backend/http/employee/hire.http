@@ -1,0 +1,248 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Employee API — hire (POST /api/v1/stores/{storeId}/employees)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom
+# (captures feed the next requests; never re-type values by hand).
+#
+# Prerequisites:
+#   - Docker stack rebuilt with the Employee module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - Company email domain in the dev stack: devtunde.com
+#
+# `# Expected:` labels the status code each request proves.
+# Re-running the file later is safe — {{$timestamp}} mints fresh personas.
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1. Chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2. Mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201 (409 on a same-second re-run — also fine)
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Seat Admin",
+  "email": "emp-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 3. Seat admin logs in (the response carries their publicId)
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4. Chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Employee Hire Probe {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345678",
+    "email": "emp-hire-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5. Seat admin hires a cashier — Door 1: unknown work email → new account
+# @name hire
+# Expected: 201 — and no password, no tokens anywhere in the body
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Cashier",
+  "email": "emp-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 6. Chain admin also hires — the dual gate lets both authorities in
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Attendant",
+  "email": "emp-attendant-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "SALES_ATTENDANT"
+}
+
+### 7. Door 2 — hiring the SAME actively-employed person again: 409
+# Expected: 409 (employee-already-employed) — email chained from request 5
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Cashier Again",
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "MANAGER"
+}
+
+### 8. Personal-domain email refused at the boundary
+# Expected: 400 (invalid-work-email)
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Shopper Person",
+  "email": "probe.shopper@gmail.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 9. Made-up job title refused
+# Expected: 400 (the body cannot map "CEO" onto the title enum)
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe CEO",
+  "email": "emp-ceo-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CEO"
+}
+
+### 10. Garbage phone refused (provisioning reuses signup's E.164 rules)
+# Expected: 400
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Phone",
+  "email": "emp-phone-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "not-a-phone",
+  "jobTitle": "CASHIER"
+}
+
+### 11. Blank full name refused
+# Expected: 400
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "   ",
+  "email": "emp-blank-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 12. Unknown store: 404 — dead stores stay hidden
+# Expected: 404
+POST {{baseUrl}}/api/v1/stores/00000000-0000-0000-0000-000000000000/employees
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Ghost Staff",
+  "email": "emp-ghost-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 13. Mint a regular user (no authority anywhere)
+# @name nobody
+# Expected: 201 (409 on a same-second re-run — also fine)
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Nobody",
+  "email": "emp-nobody-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 14. Nobody logs in
+# @name nobodyLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{nobody.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 15. Regular user hire attempt bounces: 403
+# Expected: 403
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{nobodyLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Snoop",
+  "email": "emp-snoop-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 16. No token at all: 401
+# Expected: 401
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Content-Type: application/json
+
+{
+  "fullName": "Tokenless",
+  "email": "emp-tokenless-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
+### 17. Mixed-case work domain accepted (review fix: case-insensitive gate)
+# Expected: 201 — and user.email comes back lower-cased (normalized at identity creation)
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Chidi Mixed Case",
+  "email": "emp-mixed-{{$timestamp}}@DevTunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567",
+  "jobTitle": "CASHIER"
+}
+
