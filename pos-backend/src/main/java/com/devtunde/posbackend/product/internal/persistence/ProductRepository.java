@@ -1,16 +1,11 @@
 package com.devtunde.posbackend.product.internal.persistence;
 
+import java.util.Optional;
+import java.util.UUID;
 
-   import java.util.Optional;
-   import java.util.UUID;
+import org.springframework.data.jpa.repository.JpaRepository;
 
-   import
- org.springframework.data.jpa.repository.JpaRepository;
-
-   import
- com.devtunde.posbackend.product.internal.domain.Product;
-import java.util.List;
-
+import com.devtunde.posbackend.product.internal.domain.Product;
 
 public interface ProductRepository extends JpaRepository<Product, Long> {
 
