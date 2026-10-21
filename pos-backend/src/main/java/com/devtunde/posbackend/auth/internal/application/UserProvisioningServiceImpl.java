@@ -19,6 +19,8 @@ import com.devtunde.posbackend.common.api.validation.PhoneNormalizer;
 public class UserProvisioningServiceImpl implements UserProvisioningService {
 
     private final UserRepository userRepository;
+    private final UserProvisioningWriter
+ userProvisioningWriter;
     private final PasswordEncoder passwordEncoder;
     private final PhoneNormalizer phoneNormalizer;
     private final UserMapper userMapper;
@@ -26,10 +28,13 @@ public class UserProvisioningServiceImpl implements UserProvisioningService {
     public UserProvisioningServiceImpl(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
+            UserProvisioningWriter
+ userProvisioningWriter,
             PhoneNormalizer phoneNormalizer,
             UserMapper userMapper) {
 
         this.userRepository = userRepository;
+        this.userProvisioningWriter = userProvisioningWriter;
         this.passwordEncoder = passwordEncoder;
         this.phoneNormalizer = phoneNormalizer;
         this.userMapper = userMapper;
@@ -52,9 +57,9 @@ public class UserProvisioningServiceImpl implements UserProvisioningService {
                 passwordEncoder.encode(request.password()));
 
         try {
-            userRepository.saveAndFlush(user);
+            user = userProvisioningWriter.insert(user);
         } catch (DataIntegrityViolationException ex) {
-            User raced = userRepository.findByEmail(request.email()).orElse(null);
+            User raced = userProvisioningWriter.findRacedByEmail(request.email()).orElse(null);
 
             if (raced == null) {
                 throw ex;
