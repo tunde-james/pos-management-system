@@ -16,5 +16,5 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 
     boolean existsByLoyaltyTag(String loyaltyTag);
 
-    List<Customer> findAllByOrderByCreatedAtDesc();
+    List<Customer> findAllByOrderByCreatedAtDescIdDesc();
 }

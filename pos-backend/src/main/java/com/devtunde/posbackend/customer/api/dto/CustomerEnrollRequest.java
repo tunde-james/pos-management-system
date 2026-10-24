@@ -7,5 +7,5 @@ import com.devtunde.posbackend.common.api.validation.ValidPhoneNumber;
 
 public record CustomerEnrollRequest(
         @NotBlank String fullName,
-        @ValidPhoneNumber String phone,
+        @NotBlank @ValidPhoneNumber String phone,
         @Email String email) {}

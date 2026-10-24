@@ -11,6 +11,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -153,11 +154,14 @@ class CustomerApiTests extends AbstractIntegrationTest {
 
     private MvcResult enrollAs(String token, String body) throws Exception {
 
-        return mockMvc.perform(post("/api/v1/customers")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType("application/json")
-                        .content(body))
-                .andReturn();
+        MockHttpServletRequestBuilder request =
+                post("/api/v1/customers").contentType("application/json").content(body);
+
+        if (token != null) {
+            request = request.header("Authorization", "Bearer " + token);
+        }
+
+        return mockMvc.perform(request).andReturn();
     }
 
     private MvcResult lookupByPhone(String token, String phone) throws Exception {
@@ -209,6 +213,19 @@ class CustomerApiTests extends AbstractIntegrationTest {
         MvcResult result = enrollAs(adminToken(), enrollBody("Chain Admins Friend", uniquePhone(), null));
 
         assertThat(result.getResponse().getStatus()).isEqualTo(201);
+    }
+
+    @Test
+    @DisplayName("A missing phone is refused: 400")
+    void missingPhoneReturns400() throws Exception {
+
+        MvcResult result = enrollAs(adminToken(), """
+                   {
+                       "fullName": "No Phone Person"
+                   }
+                   """);
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(400);
     }
 
     @Test

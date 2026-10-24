@@ -6,6 +6,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.hibernate.exception.ConstraintViolationException;
+
 import com.devtunde.posbackend.common.api.validation.PhoneNormalizer;
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollRequest;
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollResult;
@@ -41,7 +43,11 @@ public class CustomerEnrollRunner {
         try {
             customerRepository.saveAndFlush(customer);
         } catch (DataIntegrityViolationException ex) {
-            throw new CustomerEnrollRaceException();
+            if (ex.getCause() instanceof ConstraintViolationException cve
+                    && cve.getKind() == ConstraintViolationException.ConstraintKind.UNIQUE) {
+                throw new CustomerEnrollRaceException(ex);
+            }
+            throw ex;
         }
 
         return new CustomerEnrollResult(toResponse(customer), true);

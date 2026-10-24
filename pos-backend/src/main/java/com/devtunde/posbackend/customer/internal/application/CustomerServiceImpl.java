@@ -73,7 +73,7 @@ public class CustomerServiceImpl implements CustomerService {
     @Transactional(readOnly = true)
     public List<CustomerResponse> listCustomers() {
 
-        return customerRepository.findAllByOrderByCreatedAtDesc().stream()
+        return customerRepository.findAllByOrderByCreatedAtDescIdDesc().stream()
                 .map(this::toResponse)
                 .toList();
     }
