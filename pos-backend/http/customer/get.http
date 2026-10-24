@@ -1,0 +1,108 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Customer API — get by publicId (GET /api/v1/customers/{publicId})
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom
+# (captures feed the next requests; never re-type values by hand).
+#
+# Prerequisites:
+#   - Docker stack rebuilt with the Customer module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - Run enroll.http first (or let request 2 create the customer fresh)
+#
+# `# Expected:` labels the status code each request proves.
+# Re-run note: literal phones re-enroll idempotently (200) if already present.
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+@chainAdminToken = {{adminLogin.response.body.accessToken}}
+@userToken = {{probeLogin.response.body.accessToken}}
+@shopperAId = {{enrollShopperA.response.body.publicId}}
+@shopperBId = {{enrollShopperB.response.body.publicId}}
+
+### 1. Chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2. Enroll shopper A (capture her publicId)
+# @name enrollShopperA
+# Expected: 201
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Shopper Alpha",
+  "phone": "+2348091010101"
+}
+
+### 3. Enroll shopper B (capture her publicId)
+# @name enrollShopperB
+# Expected: 201
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Shopper Beta",
+  "phone": "+2348092020202"
+}
+
+### 4. Chain admin fetches shopper A: full record with 8-digit tag
+# Expected: 200 — fullName "Shopper Alpha", loyaltyTag 8 digits
+GET {{baseUrl}}/api/v1/customers/{{shopperAId}}
+Authorization: Bearer {{chainAdminToken}}
+
+### 5. Chain admin fetches shopper B by HER publicId: not a confusion hazard
+# Expected: 200 — fullName "Shopper Beta", different publicId than A
+GET {{baseUrl}}/api/v1/customers/{{shopperBId}}
+Authorization: Bearer {{chainAdminToken}}
+
+### 6. Unknown publicId: 404 with the customer problem shape
+# Expected: 404
+GET {{baseUrl}}/api/v1/customers/00000000-0000-0000-0000-000000000009
+Authorization: Bearer {{chainAdminToken}}
+
+### 7. Not even a UUID: type mismatch refused before the service runs
+# Expected: 400
+GET {{baseUrl}}/api/v1/customers/not-a-uuid
+Authorization: Bearer {{chainAdminToken}}
+
+### 8. Anonymous caller: 401 before any handler logic
+# Expected: 401
+GET {{baseUrl}}/api/v1/customers/{{shopperAId}}
+
+### 9. Mint a regular persona for the gate probe
+# @name probeSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Persona {{$timestamp}}",
+  "email": "probe.get{{$timestamp}}@example.com",
+  "phone": "+2348031110002",
+  "password": "Password123!"
+}
+
+### 10. Regular persona logs in
+# @name probeLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{probeSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 11. Regular user (no seat, no admin role) is gated: 403
+# Expected: 403
+GET {{baseUrl}}/api/v1/customers/{{shopperAId}}
+Authorization: Bearer {{userToken}}

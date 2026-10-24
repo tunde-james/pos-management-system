@@ -1,0 +1,103 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Customer API — till lookup by phone (GET /api/v1/customers/phone/{phone})
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom
+# (captures feed the next requests; never re-type values by hand).
+#
+# Prerequisites:
+#   - Docker stack rebuilt with the Customer module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# `# Expected:` labels the status code each request proves.
+#
+# CONTRACT NOTE: the lookup searches the STORED canonical phone exactly.
+# Enroll normalizes (+234809…) before storing; a till must query the same
+# canonical form the API echoes. Friendly local-format lookups belong to
+# the Order/till stage (parked as its first grill question).
+# Re-run note: literal phones re-enroll idempotently (200) if already present.
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+@chainAdminToken = {{adminLogin.response.body.accessToken}}
+@userToken = {{probeLogin.response.body.accessToken}}
+@enrolledPhone = {{enrollForLookup.response.body.phone}}
+@enrolledPublicId = {{enrollForLookup.response.body.publicId}}
+
+### 1. Chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2. Enroll the customer the till will look up (captures phone + publicId)
+# @name enrollForLookup
+# Expected: 201
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Till Target",
+  "phone": "+2348093030303"
+}
+
+### 3. Canonical phone finds her, with matching publicId
+# Expected: 200 — publicId equals {{enrolledPublicId}}
+GET {{baseUrl}}/api/v1/customers/phone/{{enrolledPhone}}
+Authorization: Bearer {{chainAdminToken}}
+
+### 4. Well-formed but unknown phone: 404, not an error
+# Expected: 404
+GET {{baseUrl}}/api/v1/customers/phone/+2348094040404
+Authorization: Bearer {{chainAdminToken}}
+
+### 5. Garbage string in the path: still a clean 404
+# Expected: 404
+GET {{baseUrl}}/api/v1/customers/phone/not-a-phone
+Authorization: Bearer {{chainAdminToken}}
+
+### 6. LOCAL format of an ENROLLED phone: 404 — the boundary documented
+# The stored value is canonical (+2348093030303); "08093030303" is a
+# different string and honestly not found. Order stage will own the
+# friendly-form resolution.
+# Expected: 404
+GET {{baseUrl}}/api/v1/customers/phone/08093030303
+Authorization: Bearer {{chainAdminToken}}
+
+### 7. Anonymous caller: 401
+# Expected: 401
+GET {{baseUrl}}/api/v1/customers/phone/{{enrolledPhone}}
+
+### 8. Mint a regular persona for the gate probe
+# @name probeSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Persona {{$timestamp}}",
+  "email": "probe.lookup{{$timestamp}}@example.com",
+  "phone": "+2348031110003",
+  "password": "Password123!"
+}
+
+### 9. Regular persona logs in
+# @name probeLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{probeSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 10. Regular user (no seat, no admin role) is gated: 403
+# Expected: 403
+GET {{baseUrl}}/api/v1/customers/phone/{{enrolledPhone}}
+Authorization: Bearer {{userToken}}

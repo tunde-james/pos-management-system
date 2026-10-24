@@ -1,0 +1,108 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Customer API — list (GET /api/v1/customers) — chain admin only
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom
+# (captures feed the next requests; never re-type values by hand).
+#
+# Prerequisites:
+#   - Docker stack rebuilt with the Customer module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# `# Expected:` labels the status code each request proves.
+# The list is newest-first: the latest enroll appears at index 0.
+# Re-run note: literal phones re-enroll idempotently (200) if already present.
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+@chainAdminToken = {{adminLogin.response.body.accessToken}}
+@userToken = {{probeLogin.response.body.accessToken}}
+
+### 1. Chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2. Enroll shopper A
+# @name enrollA
+# Expected: 201
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "List Shopper Alpha",
+  "phone": "+2348095050505"
+}
+
+### 3. Enroll shopper B (a moment later — B must sit above A)
+# @name enrollB
+# Expected: 201
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "List Shopper Beta",
+  "phone": "+2348096060606"
+}
+
+### 4. Chain admin lists: newest first — B above A
+# Expected: 200 — index 0 is "List Shopper Beta", A appears below B
+GET {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+
+### 5. Mint a regular persona for the gate probe
+# @name probeSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Persona {{$timestamp}}",
+  "email": "probe.list{{$timestamp}}@example.com",
+  "phone": "+2348031110004",
+  "password": "Password123!"
+}
+
+### 6. Regular persona logs in
+# @name probeLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{probeSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7. Regular user: the full list is chain-admin-only: 403
+# Expected: 403
+GET {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{userToken}}
+
+### 8. Anonymous caller: 401
+# Expected: 401
+GET {{baseUrl}}/api/v1/customers
+
+### 9. Enroll shopper C — newest entry for the order re-check
+# @name enrollC
+# Expected: 201
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "List Shopper Gamma",
+  "phone": "+2348097070707"
+}
+
+### 10. Chain admin lists again: Gamma now at index 0, Beta above Alpha
+# Expected: 200 — newest-first ordering preserved with 3 probe shoppers
+GET {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
