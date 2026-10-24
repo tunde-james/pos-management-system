@@ -1,0 +1,200 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Customer API — enroll (POST /api/v1/customers)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom
+# (captures feed the next requests; never re-type values by hand).
+#
+# Prerequisites:
+#   - Docker stack rebuilt with the Customer module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# `# Expected:` labels the status code each request proves.
+#
+# Phones are deliberate literals: the phone IS the identity being tested.
+# Re-run note: an already-enrolled phone correctly returns 200 (idempotent
+# enroll), so a previous run turns 201s into 200s — bump the digits or
+# clear the customers table to see fresh 201s again.
+#
+# Seat-admin enroll (200/201 via an ACTIVE store seat) is covered by the
+# automated suite — minting a seated employee live requires Mailtrap
+# password retrieval, so this file exercises the chain-admin path.
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+@chainAdminToken = {{adminLogin.response.body.accessToken}}
+@userToken = {{probeLogin.response.body.accessToken}}
+
+### 1. Chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2. Fresh customer enrolls: 201 + minted 8-digit loyalty tag
+# @name enrollFresh
+# Expected: 201 (loyaltyTag is 8 digits; email echoed lower-cased)
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Adaeze Obi",
+  "phone": "+2348091234567",
+  "email": "Adaeze@PostTest.com"
+}
+
+### 3. Same phone re-enrolls: 200, SAME publicId, record untouched
+# Expected: 200 — identical publicId and loyaltyTag to request 2
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Adaeze Obi",
+  "phone": "+2348091234567",
+  "email": "Adaeze@PostTest.com"
+}
+
+### 4. Impostor re-enroll: different name/email, same phone — nothing mutates
+# Expected: 200 — fullName still "Adaeze Obi", email still hers
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Impostor Kid",
+  "phone": "+2348091234567",
+  "email": "impostor@example.com"
+}
+
+### 5. Mixed-case email folds to lower case on echo
+# @name enrollMixedCase
+# Expected: 201 — email echoed as "chinedu.okafor@posttest.com"
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Chinedu Okafor",
+  "phone": "+2348097654321",
+  "email": "Chinedu.Okafor@PostTest.com"
+}
+
+### 6. Email is optional — omitted entirely
+# @name enrollNoEmail
+# Expected: 201 — email is null
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Ngozi Eze",
+  "phone": "+2348091112223"
+}
+
+### 7. Local-format phone normalizes to E.164 before storage
+# Expected: 201 — phone echoed as "+2348094445556"
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Tunde Balogun",
+  "phone": "08094445556"
+}
+
+### 8. Garbage phone is refused
+# Expected: 400 — field "phone", "Phone number is invalid"
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Bad Phone Person",
+  "phone": "not-a-phone"
+}
+
+### 9. Assigned-range trap: right LENGTH, unassigned "85" prefix
+# libphonenumber knows assigned Nigerian ranges — 85x is not one of them.
+# Expected: 400 — field "phone"
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Wrong Range Person",
+  "phone": "+234851234567"
+}
+
+### 10. Blank fullName is refused
+# Expected: 400 — field "fullName"
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "  ",
+  "phone": "+2348095556667"
+}
+
+### 11. Malformed email is refused
+# Expected: 400 — field "email"
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{chainAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Bad Email Person",
+  "phone": "+2348096667778",
+  "email": "not-an-email"
+}
+
+### 12. Anonymous caller hits the auth wall before any validation
+# Expected: 401
+POST {{baseUrl}}/api/v1/customers
+Content-Type: application/json
+
+{
+  "fullName": "Ghost Shopper",
+  "phone": "+2348097778889"
+}
+
+### 13. Mint a regular (non-admin, non-seat) persona for the gate probe
+# @name probeSignup
+# Expected: 201 (fresh persona — safe to re-run, {{$timestamp}} mints unique)
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Persona {{$timestamp}}",
+  "email": "probe.customer{{$timestamp}}@example.com",
+  "phone": "+2348031110001",
+  "password": "Password123!"
+}
+
+### 14. Regular persona logs in
+# @name probeLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{probeSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 15. Regular user (no admin role, no store seat) is gated: 403
+# Expected: 403
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Blocked Shopper",
+  "phone": "+2348098889990"
+}
