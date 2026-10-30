@@ -18,5 +18,7 @@ public interface StoreEmployeeRepository extends JpaRepository<StoreEmployee, Lo
 
     Optional<StoreEmployee> findByStoreIdAndPublicIdAndTerminatedAtIsNull(UUID storeId, UUID publicId);
 
+    Optional<StoreEmployee> findByUserPublicIdAndTerminatedAtIsNull(UUID userPublicId);
+
     boolean existsByUserPublicIdAndTerminatedAtIsNull(UUID userPublicId);
 }

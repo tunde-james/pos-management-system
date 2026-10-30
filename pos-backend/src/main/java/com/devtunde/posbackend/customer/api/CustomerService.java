@@ -1,6 +1,7 @@
 package com.devtunde.posbackend.customer.api;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollRequest;
@@ -16,4 +17,6 @@ public interface CustomerService {
     CustomerResponse getCustomerByPhone(String phone);
 
     List<CustomerResponse> listCustomers();
+
+    Optional<UUID> customerPublicIdByPhone(String canonicalPhone);
 }

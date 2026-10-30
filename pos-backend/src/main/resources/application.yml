@@ -65,3 +65,5 @@ app:
       zone: 'Africa/Lagos'
   employee:
     email-domain: devtunde.com
+  money:
+    currency-symbol: "₦"

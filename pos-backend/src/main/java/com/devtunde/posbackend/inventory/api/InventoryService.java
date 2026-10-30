@@ -9,6 +9,8 @@ import com.devtunde.posbackend.inventory.api.dto.InventoryResponse;
 import com.devtunde.posbackend.inventory.api.dto.LowStockResponse;
 import com.devtunde.posbackend.inventory.api.dto.MovementResponse;
 import com.devtunde.posbackend.inventory.api.dto.ReceivedRequest;
+import com.devtunde.posbackend.inventory.api.dto.SaleLine;
+import com.devtunde.posbackend.inventory.api.dto.SaleOutcome;
 import com.devtunde.posbackend.inventory.api.dto.StocktakeRequest;
 import com.devtunde.posbackend.inventory.api.dto.ThresholdUpdateRequest;
 
@@ -31,4 +33,6 @@ public interface InventoryService {
     LowStockResponse getLowStock(UUID storeId);
 
     List<MovementResponse> getMovements(UUID storeId, UUID productPublicId);
+
+    SaleOutcome sellStock(UUID storeId, List<SaleLine> lines);
 }

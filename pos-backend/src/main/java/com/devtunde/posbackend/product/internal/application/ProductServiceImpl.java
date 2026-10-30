@@ -1,6 +1,7 @@
 package com.devtunde.posbackend.product.internal.application;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.context.ApplicationEventPublisher;
@@ -17,6 +18,7 @@ import com.devtunde.posbackend.product.api.dto.ProductMasterResponse;
 import com.devtunde.posbackend.product.api.dto.ProductMasterUpdateRequest;
 import com.devtunde.posbackend.product.api.dto.ProductRequest;
 import com.devtunde.posbackend.product.api.dto.ProductResponse;
+import com.devtunde.posbackend.product.api.dto.StoreProductSaleView;
 import com.devtunde.posbackend.product.api.event.StoreListingDelistedEvent;
 import com.devtunde.posbackend.product.api.exception.EmptyPatchException;
 import com.devtunde.posbackend.product.api.exception.ProductAlreadyListedException;
@@ -173,6 +175,19 @@ public class ProductServiceImpl implements ProductService {
                 .findByPublicId(productPublicId)
                 .orElseThrow(ProductNotFoundException::new)
                 .getName();
+    }
+
+    @Override
+    public Optional<StoreProductSaleView> findSaleView(UUID storeId, UUID productPublicId) {
+
+        if (!isListed(storeId, productPublicId)) {
+            return Optional.empty();
+        }
+
+        return storeProductRepository
+                .findByStoreIdAndProductPublicId(storeId, productPublicId)
+                .map(listing -> new StoreProductSaleView(
+                        productPublicId, productNameOf(productPublicId), listing.getSellingPrice()));
     }
 
     private StoreApiResponse requireStore(UUID storeId) {
