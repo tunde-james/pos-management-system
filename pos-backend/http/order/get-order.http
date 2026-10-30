@@ -1,0 +1,224 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Order API — READ ORDER / MACHINE RECEIPT (GET /api/v1/orders/{publicId})
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Order module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# Contract (ticket 0016):
+#   - This is the MACHINE view: kobo truth + ids, for Refund / Shift
+#     Report / reconciliation. The customer-facing view lives at
+#     GET /api/v1/orders/{publicId}/receipt (see receipt.http).
+#   - Who may read: the serving operator, any seat admin, or the chain
+#     admin — anyone else 403.
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# Captures are session-scoped: a "No value is resolved" error means
+# re-send the setup requests from the top of this file.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Seat Admin",
+  "email": "ord-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Order Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345678",
+    "email": "ord-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires a cashier (the password we send IS the password)
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Cashier",
+  "email": "ord-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234568",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the hired cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Order Probe Category {{$timestamp}}"
+}
+
+### 9 — Setup: the seat admin lists a product (₦12,000.00 selling price)
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-ORD-{{$timestamp}}",
+  "description": "Order probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Setup: stock the shelf (10 units)
+# @name stock
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 11 — Setup: ring one sale (2 units, cash)
+# @name order
+# Expected: 201
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 2
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 12 — THE HAPPY PATH: the serving operator reads the machine receipt
+# Expected: 200 — status PAID, totalKobo 2400000, displayTotal ₦24000.00,
+# sessionPublicId + operatorPublicId present, customerPublicId absent
+GET {{baseUrl}}/api/v1/orders/{{order.response.body.publicId}}
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 13 — The store's seat admin reads the sale
+# Expected: 200
+GET {{baseUrl}}/api/v1/orders/{{order.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+
+### 14 — The chain admin reads any sale in the chain
+# Expected: 200
+GET {{baseUrl}}/api/v1/orders/{{order.response.body.publicId}}
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 15 — Setup: hire a second cashier (a colleague who served no one)
+# @name hireSecond
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Second Cashier",
+  "email": "ord-second-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234569",
+  "jobTitle": "CASHIER"
+}
+
+### 16 — Setup: the second cashier logs in
+# @name secondLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireSecond.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 17 — A cashier who did NOT serve the sale reads it
+# Expected: 403
+GET {{baseUrl}}/api/v1/orders/{{order.response.body.publicId}}
+Authorization: Bearer {{secondLogin.response.body.accessToken}}
+
+### 18 — An order that never existed
+# Expected: 404
+GET {{baseUrl}}/api/v1/orders/00000000-0000-0000-0000-000000000009
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+
+### 19 — Anonymous read — no token at all
+# Expected: 401
+GET {{baseUrl}}/api/v1/orders/{{order.response.body.publicId}}

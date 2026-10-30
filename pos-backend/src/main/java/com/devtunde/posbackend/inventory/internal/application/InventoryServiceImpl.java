@@ -1,7 +1,11 @@
 package com.devtunde.posbackend.inventory.internal.application;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -21,6 +25,9 @@ import com.devtunde.posbackend.inventory.api.dto.LowStockItemResponse;
 import com.devtunde.posbackend.inventory.api.dto.LowStockResponse;
 import com.devtunde.posbackend.inventory.api.dto.MovementResponse;
 import com.devtunde.posbackend.inventory.api.dto.ReceivedRequest;
+import com.devtunde.posbackend.inventory.api.dto.SaleLine;
+import com.devtunde.posbackend.inventory.api.dto.SaleOutcome;
+import com.devtunde.posbackend.inventory.api.dto.StockShortfall;
 import com.devtunde.posbackend.inventory.api.dto.StocktakeRequest;
 import com.devtunde.posbackend.inventory.api.dto.ThresholdUpdateRequest;
 import com.devtunde.posbackend.inventory.api.exception.InvalidStockAdjustmentException;
@@ -232,6 +239,52 @@ public class InventoryServiceImpl implements InventoryService {
         return inventoryMapper.toMovementResponses(
                 stockMovementRepository.findByStoreIdAndProductPublicIdOrderByCreatedAtAscIdAsc(
                         storeId, productPublicId));
+    }
+
+    @Override
+    public SaleOutcome sellStock(UUID storeId, List<SaleLine> lines) {
+
+        Map<UUID, Integer> wantedByProduct = new TreeMap<>();
+        for (SaleLine line : lines) {
+
+            wantedByProduct.merge(line.productPublicId(), line.quantity(), Integer::sum);
+        }
+
+        Map<UUID, Inventory> lockedByProduct = new LinkedHashMap<>();
+        List<StockShortfall> shortfalls = new ArrayList<>();
+
+        for (Map.Entry<UUID, Integer> wanted : wantedByProduct.entrySet()) {
+            Inventory inventory =
+                    inventoryRepository.lockActive(storeId, wanted.getKey()).orElse(null);
+
+            int available = inventory == null ? 0 : inventory.getQuantity();
+
+            if (wanted.getValue() > available) {
+                shortfalls.add(new StockShortfall(wanted.getKey(), wanted.getValue(), available));
+            }
+
+            if (inventory != null) {
+
+                lockedByProduct.put(wanted.getKey(), inventory);
+            }
+        }
+
+        if (!shortfalls.isEmpty()) {
+            return new SaleOutcome(shortfalls);
+        }
+
+        for (Map.Entry<UUID, Integer> wanted : wantedByProduct.entrySet()) {
+            Inventory inventory = lockedByProduct.get(wanted.getKey());
+            int before = inventory.getQuantity();
+
+            inventory.setQuantity(before - wanted.getValue());
+
+            inventoryRepository.save(inventory);
+
+            recordMovement(inventory, MovementType.SALE, -wanted.getValue(), before, "Till sale");
+        }
+
+        return new SaleOutcome(shortfalls);
     }
 
     private Inventory requireInventory(UUID storeId, UUID productPublicId) {

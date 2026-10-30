@@ -1,6 +1,7 @@
 package com.devtunde.posbackend.product.api;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.devtunde.posbackend.product.api.dto.ListingPriceUpdateRequest;
@@ -8,6 +9,7 @@ import com.devtunde.posbackend.product.api.dto.ProductMasterResponse;
 import com.devtunde.posbackend.product.api.dto.ProductMasterUpdateRequest;
 import com.devtunde.posbackend.product.api.dto.ProductRequest;
 import com.devtunde.posbackend.product.api.dto.ProductResponse;
+import com.devtunde.posbackend.product.api.dto.StoreProductSaleView;
 
 public interface ProductService {
 
@@ -28,4 +30,6 @@ public interface ProductService {
     boolean isListed(UUID storeId, UUID productPublicId);
 
     String productNameOf(UUID productPublicId);
+
+    Optional<StoreProductSaleView> findSaleView(UUID storeId, UUID productPublicId);
 }

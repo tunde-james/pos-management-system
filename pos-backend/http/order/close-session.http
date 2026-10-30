@@ -1,0 +1,170 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Order API — CLOSE SESSION (POST /api/v1/sessions/{publicId}/close)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Order module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# Contract (ticket 0016, Q9b state machine):
+#   - ACTIVE -> CLOSED (the only legal close).
+#   - LOCKED -> CLOSED is refused: resume first, then close.
+#   - Only the operator may close. A CLOSED row releases the one-slot,
+#     so the operator may open again.
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# Captures are session-scoped: a "No value is resolved" error means
+# re-send the setup requests from the top of this file.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Seat Admin",
+  "email": "ord-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Order Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345678",
+    "email": "ord-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires a cashier (the password we send IS the password)
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Cashier",
+  "email": "ord-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234568",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the hired cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session (the one the probes close)
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: hire a second cashier (the intruder persona)
+# @name hireSecond
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Second Cashier",
+  "email": "ord-second-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234569",
+  "jobTitle": "CASHIER"
+}
+
+### 9 — Setup: the second cashier logs in
+# @name secondLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireSecond.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 10 — A colleague closes someone else's session
+# Expected: 403 — only the operator may close
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/close
+Authorization: Bearer {{secondLogin.response.body.accessToken}}
+
+### 11 — THE HAPPY PATH: the operator closes their own ACTIVE session
+# Expected: 200 — status CLOSED, closedAt stamped
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/close
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 12 — Close it AGAIN — already CLOSED
+# Expected: 409
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/close
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 13a — Reopen a fresh session (CLOSED released the slot)
+# @name reopened
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 13b — Lock the fresh session (restroom break)
+# Expected: 200 — status LOCKED
+POST {{baseUrl}}/api/v1/sessions/{{reopened.response.body.publicId}}/lock
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 13c — Close the LOCKED session — resume first, then close
+# Expected: 409
+POST {{baseUrl}}/api/v1/sessions/{{reopened.response.body.publicId}}/close
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 14 — Close a session that never existed
+# Expected: 404
+POST {{baseUrl}}/api/v1/sessions/00000000-0000-0000-0000-000000000009/close
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}

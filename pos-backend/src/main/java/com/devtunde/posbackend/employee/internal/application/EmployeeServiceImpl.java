@@ -1,6 +1,7 @@
 package com.devtunde.posbackend.employee.internal.application;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.access.AccessDeniedException;
@@ -13,6 +14,7 @@ import com.devtunde.posbackend.auth.api.dto.UserViewResponse;
 import com.devtunde.posbackend.auth.api.exception.UserProvisioningRaceException;
 import com.devtunde.posbackend.employee.api.EmployeeJobTitle;
 import com.devtunde.posbackend.employee.api.EmployeeService;
+import com.devtunde.posbackend.employee.api.dto.ActiveEmploymentView;
 import com.devtunde.posbackend.employee.api.dto.EmployeeHireRequest;
 import com.devtunde.posbackend.employee.api.dto.EmployeeResponse;
 import com.devtunde.posbackend.employee.api.exception.EmployeeNotFoundException;
@@ -81,6 +83,14 @@ public class EmployeeServiceImpl implements EmployeeService {
                 .orElseThrow(EmployeeNotFoundException::new);
 
         return toResponse(employment);
+    }
+
+    @Override
+    public Optional<ActiveEmploymentView> activeEraOfUser(UUID userPublicId) {
+
+        return storeEmployeeRepository
+                .findByUserPublicIdAndTerminatedAtIsNull(userPublicId)
+                .map(era -> new ActiveEmploymentView(era.getStoreId(), era.getJobTitle()));
     }
 
     @Override

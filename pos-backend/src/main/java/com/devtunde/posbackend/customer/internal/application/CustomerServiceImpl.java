@@ -1,6 +1,7 @@
 package com.devtunde.posbackend.customer.internal.application;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.access.AccessDeniedException;
@@ -76,6 +77,13 @@ public class CustomerServiceImpl implements CustomerService {
         return customerRepository.findAllByOrderByCreatedAtDescIdDesc().stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<UUID> customerPublicIdByPhone(String canonicalPhone) {
+
+        return customerRepository.findByPhone(canonicalPhone).map(Customer::getPublicId);
     }
 
     private void requireAnySeatAdminOrChainAdmin() {
