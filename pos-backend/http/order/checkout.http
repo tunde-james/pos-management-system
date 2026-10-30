@@ -1,0 +1,441 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Order API — CHECKOUT (POST /api/v1/orders)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Order module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# Contract (ticket 0016):
+#   - CASHIER/MANAGER with an ACTIVE session only (title gate + session
+#     gate; session-shaped 409s fire BEFORE basket validation).
+#   - Snapshot (Q3): name + price frozen at sale; ALL money in kobo.
+#   - Counter-settled v1 (Q4): CASH/CARD/TRANSFER, optional reference.
+#   - Shortfall (Q6): 409 with per-line availability, NOTHING committed.
+#   - Customer (Q5/Q8): optional phone, normalized at the boundary,
+#     unknown phone = 400 (never silently unattached).
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# Captures are session-scoped: a "No value is resolved" error means
+# re-send the setup requests from the top of this file.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Seat Admin",
+  "email": "ord-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Order Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345678",
+    "email": "ord-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires a cashier (the password we send IS the password)
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Cashier",
+  "email": "ord-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234568",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the hired cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session (every checkout rides on it)
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Order Probe Category {{$timestamp}}"
+}
+
+### 9 — Setup: the seat admin lists a product (₦12,000.00 selling price)
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-ORD-{{$timestamp}}",
+  "description": "Order probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Setup: stock the shelf (10 units)
+# @name stock
+# Expected: 201 — an OPENING movement is recorded
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 11 — THE HAPPY PATH: cash checkout, 2 units
+# @name order
+# Expected: 201 — status PAID, totalKobo 2400000, displayTotal ₦24000.00,
+# line snapshot unitPriceKobo 1200000, customerPublicId absent
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 2
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 12 — Card checkout with a terminal reference — the reference echoes back
+# Expected: 201 — paymentMethod CARD, paymentReference "TERM-PROBE-1"
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CARD",
+  "paymentReference": "TERM-PROBE-1"
+}
+
+### 13 — Insufficient stock: ask for 100, the shelf holds 7 (10 - 2 - 1)
+# Expected: 409 — shortfalls[0].requested 100, shortfalls[0].available 7,
+# stock UNCHANGED (nothing committed, no holds — Q6)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 100
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 14 — A product this store has never listed
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "00000000-0000-0000-0000-000000000009",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 15 — Quantity zero
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 0
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 16 — Quantity above 999
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1000
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 17 — An empty basket
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [],
+  "paymentMethod": "CASH"
+}
+
+### 18 — Missing payment method
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### 19 — A payment method outside CASH/CARD/TRANSFER
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CHEQUE"
+}
+
+### 20 — A well-formed phone nobody has enrolled — never a silent walk-in
+# Expected: 400 — "No customer with phone ... Enroll them first."
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH",
+  "customerPhone": "+2348099990002"
+}
+
+### 21 — Setup: the seat admin enrolls a customer under the canonical phone
+# @name enroll
+# Expected: 201 (200 on a later re-run — idempotent enroll)
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Loyal Shopper",
+  "phone": "+2348093030304"
+}
+
+### 22 — The till types the LOCAL format — normalized at the boundary (Q8)
+# Expected: 201 — customerPublicId = the enrolled customer's publicId
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH",
+  "customerPhone": "08093030304"
+}
+
+### 23 — Setup: hire a SALES_ATTENDANT (the title-gate persona)
+# @name hireAttendant
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Attendant",
+  "email": "ord-attendant-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234569",
+  "jobTitle": "SALES_ATTENDANT"
+}
+
+### 24 — Setup: the attendant logs in
+# @name attendantLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireAttendant.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 25 — The attendant checks out — the title gate refuses (Q1)
+# Expected: 403
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{attendantLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 26 — Setup: hire a SECOND cashier who will never open a session
+# @name hireSessionless
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Sessionless Cashier",
+  "email": "ord-sessionless-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234570",
+  "jobTitle": "CASHIER"
+}
+
+### 27 — Setup: the sessionless cashier logs in
+# @name sessionlessLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireSessionless.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 28 — A valid cashier with NO session checks out — the session gate fires
+# Expected: 409 — "Open a session first." (precondition beats validation:
+# the basket here is even garbage, and the 409 still wins)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{sessionlessLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "00000000-0000-0000-0000-000000000009",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 29 — Anonymous checkout — no token at all
+# Expected: 401
+POST {{baseUrl}}/api/v1/orders
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}

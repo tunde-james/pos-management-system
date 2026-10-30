@@ -65,7 +65,10 @@ public class SessionServiceImpl implements SessionService {
 
             tillSessionRepository.saveAndFlush(session);
         } catch (DataIntegrityViolationException ex) {
-            throw new SessionConflictException("You already have an open session. Close it first.");
+            if (ex.getMessage() != null && ex.getMessage().contains("uk_till_sessions_open_slot")) {
+                throw new SessionConflictException("You already have an open session. Close it first.");
+            }
+            throw ex;
         }
 
         return toResponse(session);

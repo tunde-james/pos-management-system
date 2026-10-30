@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -243,7 +244,7 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     public SaleOutcome sellStock(UUID storeId, List<SaleLine> lines) {
 
-        Map<UUID, Integer> wantedByProduct = new LinkedHashMap<>();
+        Map<UUID, Integer> wantedByProduct = new TreeMap<>();
         for (SaleLine line : lines) {
 
             wantedByProduct.merge(line.productPublicId(), line.quantity(), Integer::sum);

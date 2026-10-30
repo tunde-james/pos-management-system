@@ -1,0 +1,167 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Order API — RESUME SESSION (POST /api/v1/sessions/{publicId}/resume)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Order module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#
+# Contract (ticket 0016, Q9b state machine):
+#   - LOCKED -> ACTIVE is the only legal resume (resume of ACTIVE = 409).
+#   - A resumed session is checkout-ready again immediately.
+#   - Only the operator may resume.
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# Captures are session-scoped: a "No value is resolved" error means
+# re-send the setup requests from the top of this file.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Seat Admin",
+  "email": "ord-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234567"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Order Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345678",
+    "email": "ord-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires a cashier (the password we send IS the password)
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Cashier",
+  "email": "ord-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234568",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the hired cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session (the one the probes resume)
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Resume a session that is still ACTIVE — nothing to resume
+# Expected: 409
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/resume
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 9 — Lock first (restroom break)
+# Expected: 200 — status LOCKED
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/lock
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 10 — THE HAPPY PATH: resume the LOCKED session — back from the break
+# Expected: 200 — status ACTIVE, checkout-ready again
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/resume
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 11 — Resume it AGAIN — already ACTIVE
+# Expected: 409
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/resume
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 12 — Setup: hire a second cashier (the intruder persona)
+# @name hireSecond
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Order Second Cashier",
+  "email": "ord-second-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234569",
+  "jobTitle": "CASHIER"
+}
+
+### 13 — Setup: the second cashier logs in
+# @name secondLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireSecond.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 14 — A colleague resumes another operator's session
+# Expected: 403
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/resume
+Authorization: Bearer {{secondLogin.response.body.accessToken}}
+
+### 15 — Resume a session that never existed
+# Expected: 404
+POST {{baseUrl}}/api/v1/sessions/00000000-0000-0000-0000-000000000009/resume
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 16 — Anonymous resume — no token at all
+# Expected: 401
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/resume
