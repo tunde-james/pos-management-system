@@ -10,13 +10,25 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record OrderResponse(
         UUID publicId,
         String status,
+        String statusReason,
+        String orderNumber,
         UUID sessionPublicId,
         UUID operatorPublicId,
         UUID storeId,
         UUID customerPublicId,
         String paymentMethod,
         String paymentReference,
+        String provider,
+        String providerReference,
         long totalKobo,
         String displayTotal,
         LocalDateTime paidAt,
-        List<OrderLineResponse> lines) {}
+        LocalDateTime expiresAt,
+        PaystackBlock paystack,
+        MonnifyBlock monnify,
+        List<OrderLineResponse> lines) {
+
+    public record PaystackBlock(String authorizationUrl) {}
+
+    public record MonnifyBlock(String accountNumber, String bankName, String bankCode) {}
+}
