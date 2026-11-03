@@ -1,0 +1,2 @@
+ALTER TABLE orders
+MODIFY order_number VARCHAR(12) NOT NULL;
