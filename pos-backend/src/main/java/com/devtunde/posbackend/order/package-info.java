@@ -5,6 +5,7 @@
             "customer::api",
             "employee::api",
             "inventory::api",
+            "payments::api",
             "product::api",
             "store::api"
         })
