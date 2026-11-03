@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.devtunde.posbackend.customer.api.dto.CustomerContact;
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollRequest;
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollResult;
 import com.devtunde.posbackend.customer.api.dto.CustomerResponse;
@@ -19,4 +20,6 @@ public interface CustomerService {
     List<CustomerResponse> listCustomers();
 
     Optional<UUID> customerPublicIdByPhone(String canonicalPhone);
+
+    CustomerContact customerContactByPublicId(UUID publicId);
 }
