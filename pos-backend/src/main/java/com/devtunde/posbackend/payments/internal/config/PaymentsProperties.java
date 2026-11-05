@@ -4,7 +4,7 @@ import java.time.Duration;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@ConfigurationProperties(prefix = "app.payments.providers")
+@ConfigurationProperties(prefix = "app.payments")
 public record PaymentsProperties(String currencyCode, Providers providers) {
 
     public record Providers(Paystack paystack, Monnify monnify) {}

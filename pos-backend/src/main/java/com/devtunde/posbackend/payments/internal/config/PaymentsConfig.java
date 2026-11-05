@@ -22,7 +22,7 @@ import com.monnify.services.transaction.TransactionService;
 public class PaymentsConfig {
 
     @Bean
-    @ConditionalOnExpression("'${app.payments.providers.paysatck.secret-key:}' != ''")
+    @ConditionalOnExpression("'${app.payments.providers.paystack.secret-key:}' != ''")
     PaystackGateway paystackGateway(PaymentsProperties properties) {
 
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();

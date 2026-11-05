@@ -12,7 +12,7 @@ import com.devtunde.posbackend.payments.api.exception.PaymentProviderNotConfigur
 public class PaymentGatewayRouter implements PaymentGateway {
 
     private static final String WALK_IN_NAME = "Walk-in Customer";
-    private static final String WALK_IN_EMAIL_FORMAT = "order-%s@invalid";
+    private static final String WALK_IN_EMAIL_FORMAT = "order-%s@example.com";
 
     private final PaystackGateway paystack;
     private final MonnifyGateway monnify;

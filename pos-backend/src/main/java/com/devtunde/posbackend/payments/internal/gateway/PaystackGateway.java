@@ -2,6 +2,8 @@ package com.devtunde.posbackend.payments.internal.gateway;
 
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * Paystack client — plain REST via RestClient
  * (Paystack has no official Java server SDK,
@@ -60,7 +62,9 @@ public class PaystackGateway {
 
     private record InitializeResponse(boolean status, InitializeData data) {}
 
-    private record InitializeData(String reference, String authorizationUrl) {}
+    private record InitializeData(
+            String reference,
+            @JsonProperty("authorization_url") String authorizationUrl) {}
 
     private record VerifyResponse(boolean status, TransactionData data) {}
 
