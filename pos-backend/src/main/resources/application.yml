@@ -67,3 +67,16 @@ app:
     email-domain: devtunde.com
   money:
     currency-symbol: "₦"
+  payments:
+    pending-ttl: 20m
+    currency-code: NGN
+    providers:
+      paystack:
+        base-url: ${PAYSTACK_BASE_URL:https://api.paystack.co}
+        secret-key: ${PAYSTACK_SECRET_KEY:}
+        connect-timeout: 5s
+        read-timeout: 15s
+      monnify:
+        api-key: ${MONNIFY_API_KEY:}
+        secret-key: ${MONNIFY_SECRET_KEY:}
+        contract-code: ${MONNIFY_CONTRACT_CODE:}

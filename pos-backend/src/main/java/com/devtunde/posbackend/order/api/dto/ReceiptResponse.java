@@ -10,7 +10,7 @@ public record ReceiptResponse(
         String cashierName,
         String paymentMethod,
         LocalDateTime paidAt,
-        String total,
+        String displayTotal,
         List<Line> lines) {
 
     public record Line(String name, int quantity, String amount) {}

@@ -20,7 +20,9 @@ public record CheckoutRequest(
 
         @Size(max = 255) String paymentReference,
 
-        @Size(max = 20) String customerPhone) {
+        @Size(max = 20) String customerPhone,
+
+        @Size(max = 10) String paymentProvider) {
 
     public record Line(
             @NotNull(message = "Product is required.") UUID productPublicId,

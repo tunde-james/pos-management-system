@@ -1,0 +1,325 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Payments API — PENDING TRAY (GET /api/v1/orders/pending[?number=])
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Payments module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - Sandbox keys in .env (PAYSTACK_SECRET_KEY at minimum) for the 202s.
+#
+# Contract (ticket 0017):
+#   - The tray lists ONLY the caller's alive pending slips, newest first.
+#     Paid / failed / TTL-expired slips are not listed (a dead slip still
+#     answers by its id via GET /api/v1/orders/{publicId} and by number).
+#   - ?number=O-0000xx is the "the customer quoted their number" filter:
+#     exactly that slip, or 404 — including numbers from OTHER tills.
+#   - Requires the caller's own ACTIVE session (409 without one).
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Tray Seat Admin",
+  "email": "tray-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234611"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Tray Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345611",
+    "email": "tray-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires the primary cashier
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Tray Cashier",
+  "email": "tray-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234612",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Tray Probe Category {{$timestamp}}"
+}
+
+### 9 — Setup: the seat admin lists a product
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-TRAY-{{$timestamp}}",
+  "description": "Tray probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Setup: stock the shelf (20 units — plenty for several slips)
+# @name stock
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 20,
+  "lowStockThreshold": 1
+}
+
+### 11 — Setup: the cashier's FIRST Paystack slip
+# @name slip1
+# Expected: 202
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 12 — Setup: the cashier's SECOND Paystack slip (newer — tops the tray)
+# @name slip2
+# Expected: 202
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 13 — Setup: a counter-settled sale (PAID — must NOT appear on the tray)
+# @name cashOrder
+# Expected: 201
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 14 — THE TRAY: own alive slips, newest first, PAID excluded
+# Expected: 200 — an array of EXACTLY 2 items: slip2 first (newest),
+# slip1 second; the cash sale is absent; each item carries publicId,
+# orderNumber, provider, totalKobo, displayTotal, expiresAt
+GET {{baseUrl}}/api/v1/orders/pending
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 15 — The customer quoted their number: the filter finds exactly it
+# Expected: 200 — an array of EXACTLY 1 item: slip1's publicId
+GET {{baseUrl}}/api/v1/orders/pending?number={{slip1.response.body.orderNumber}}
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 16 — A number nobody ever minted
+# Expected: 404
+GET {{baseUrl}}/api/v1/orders/pending?number=O-999999
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 17 — Setup: hire a SECOND cashier (the other till)
+# @name hireOther
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Tray Neighbor Cashier",
+  "email": "tray-neighbor-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234613",
+  "jobTitle": "CASHIER"
+}
+
+### 18 — Setup: the neighbor logs in
+# @name neighborLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireOther.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 19 — Setup: the neighbor opens a session
+# @name neighborSession
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{neighborLogin.response.body.accessToken}}
+
+### 20 — Setup: the neighbor's own slip
+# @name neighborSlip
+# Expected: 202
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{neighborLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 21 — The neighbor's tray shows ONLY their slip — never another till's
+# Expected: 200 — an array of EXACTLY 1 item: neighborSlip's publicId
+# (slip1 and slip2 are absent)
+GET {{baseUrl}}/api/v1/orders/pending
+Authorization: Bearer {{neighborLogin.response.body.accessToken}}
+
+### 22 — Cross-till peeking by number — no cross-till peeking
+# Expected: 404 — the primary cashier's number is not found on the
+# neighbor's tray
+GET {{baseUrl}}/api/v1/orders/pending?number={{slip1.response.body.orderNumber}}
+Authorization: Bearer {{neighborLogin.response.body.accessToken}}
+
+### 23 — Setup: hire a THIRD cashier who will never open a session
+# @name hireSessionless
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Tray Sessionless Cashier",
+  "email": "tray-sessionless-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234614",
+  "jobTitle": "CASHIER"
+}
+
+### 24 — Setup: the sessionless cashier logs in
+# @name sessionlessLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireSessionless.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 25 — A tray with NO session
+# Expected: 409 — session-conflict, "Open a session first."
+GET {{baseUrl}}/api/v1/orders/pending
+Authorization: Bearer {{sessionlessLogin.response.body.accessToken}}
+
+### 26 — Anonymous tray
+# Expected: 401
+GET {{baseUrl}}/api/v1/orders/pending
+
+### 27 — Send again 20+ minutes after requests 11/12: the stale slips
+# drop out of the list (but request 15 still finds slip1 by number —
+# the number lookup serves dead slips too)
+# Expected: 200 — an array of 0 items
+GET {{baseUrl}}/api/v1/orders/pending
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
