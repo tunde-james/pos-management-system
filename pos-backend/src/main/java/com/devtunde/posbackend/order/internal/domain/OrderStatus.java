@@ -1,5 +1,8 @@
 package com.devtunde.posbackend.order.internal.domain;
 
 public enum OrderStatus {
-    PAID
+    PENDING_PAYMENT,
+    PAID,
+    FAILED,
+    EXPIRED
 }

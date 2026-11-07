@@ -17,6 +17,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import com.devtunde.posbackend.payments.api.PaymentProvider;
 import lombok.AccessLevel;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -55,14 +56,43 @@ public class Order {
     private String paymentReference;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 10)
+    @Column(nullable = false, length = 20)
     private OrderStatus status;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_reason", length = 40)
+    private OrderStatusReason statusReason;
+
+    @Column(name = "order_number", nullable = false, length = 12)
+    private String orderNumber;
 
     @Column(name = "total_kobo", nullable = false)
     private long totalKobo;
 
-    @Column(name = "paid_at", nullable = false, updatable = false)
+    @Column(name = "paid_at")
     private LocalDateTime paidAt;
+
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "provider", length = 10)
+    private PaymentProvider provider;
+
+    @Column(name = "provider_url", length = 500)
+    private String providerUrl;
+
+    @Column(name = "provider_account_number", length = 30)
+    private String providerAccountNumber;
+
+    @Column(name = "provider_bank_name", length = 100)
+    private String providerBankName;
+
+    @Column(name = "provider_bank_code", length = 10)
+    private String providerBankCode;
+
+    @Column(name = "provider_account_expires_at")
+    private LocalDateTime providerAccountExpiresAt;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -88,6 +118,74 @@ public class Order {
         order.paidAt = LocalDateTime.now();
 
         return order;
+    }
+
+    public static Order pendingPayment(
+            Long sessionId,
+            UUID customerPublicId,
+            PaymentMethod paymentMethod,
+            long totalKobo,
+            LocalDateTime expiresAt) {
+
+        Order order = new Order();
+        order.publicId = UUID.randomUUID();
+        order.sessionId = sessionId;
+        order.customerPublicId = customerPublicId;
+        order.paymentMethod = paymentMethod;
+        order.status = OrderStatus.PENDING_PAYMENT;
+        order.totalKobo = totalKobo;
+        order.expiresAt = expiresAt;
+
+        return order;
+    }
+
+    public void attachGateway(
+            PaymentProvider provider,
+            String providerReference,
+            String providerUrl,
+            String accountNumber,
+            String bankName,
+            String bankCode,
+            LocalDateTime accountExpiresAt) {
+
+        this.provider = provider;
+        this.paymentReference = providerReference;
+        this.providerUrl = providerUrl;
+        this.providerAccountNumber = accountNumber;
+        this.providerBankName = bankName;
+        this.providerBankCode = bankCode;
+        this.providerAccountExpiresAt = accountExpiresAt;
+    }
+
+    public void assignOrderNumber(String orderNumber) {
+        this.orderNumber = orderNumber;
+    }
+
+    public boolean isAlive() {
+        return status == OrderStatus.PENDING_PAYMENT
+                && (expiresAt == null || !LocalDateTime.now().isAfter(expiresAt));
+    }
+
+    public void markPaid() {
+        this.status = OrderStatus.PAID;
+        this.paidAt = LocalDateTime.now();
+        this.statusReason = null;
+    }
+
+    public void markFailed(OrderStatusReason reason) {
+        this.status = OrderStatus.FAILED;
+        this.statusReason = reason;
+    }
+
+    public void markExpired(OrderStatusReason reason) {
+        this.status = OrderStatus.EXPIRED;
+        this.statusReason = reason;
+    }
+
+    public void reviveUntil(LocalDateTime newExpiry) {
+        this.status = OrderStatus.PENDING_PAYMENT;
+        this.statusReason = null;
+        this.expiresAt = newExpiry;
     }
 
     @PrePersist

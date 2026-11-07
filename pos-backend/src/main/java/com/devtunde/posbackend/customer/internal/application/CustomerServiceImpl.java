@@ -12,6 +12,7 @@ import com.devtunde.posbackend.auth.api.UserAccountService;
 import com.devtunde.posbackend.auth.api.UserRole;
 import com.devtunde.posbackend.auth.api.dto.UserViewResponse;
 import com.devtunde.posbackend.customer.api.CustomerService;
+import com.devtunde.posbackend.customer.api.dto.CustomerContact;
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollRequest;
 import com.devtunde.posbackend.customer.api.dto.CustomerEnrollResult;
 import com.devtunde.posbackend.customer.api.dto.CustomerResponse;
@@ -68,6 +69,16 @@ public class CustomerServiceImpl implements CustomerService {
         requireAnySeatAdminOrChainAdmin();
 
         return toResponse(customerRepository.findByPhone(phone).orElseThrow(CustomerNotFoundException::new));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CustomerContact customerContactByPublicId(UUID publicId) {
+
+        return customerRepository
+                .findByPublicId(publicId)
+                .map(customer -> new CustomerContact(customer.getFullName(), customer.getEmail()))
+                .orElseThrow(CustomerNotFoundException::new);
     }
 
     @Override

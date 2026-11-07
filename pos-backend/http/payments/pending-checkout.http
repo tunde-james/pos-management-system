@@ -1,0 +1,432 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Payments API — PENDING CHECKOUT (POST /api/v1/orders with paymentProvider)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Payments module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - SANDBOX KEYS in .env (see scripts/payments-sandbox-setup-wizard.sh):
+#       PAYSTACK_SECRET_KEY, MONNIFY_API_KEY, MONNIFY_SECRET_KEY,
+#       MONNIFY_CONTRACT_CODE
+#     Without the keys, every provider request answers 400
+#     "payment-provider-not-configured" instead of 202 — that 400 is a
+#     labeled state in this file too.
+#
+# Contract (ticket 0017):
+#   - One door: POST /api/v1/orders + optional paymentProvider
+#     (PAYSTACK | MONNIFY). Absent = counter-settled 201 PAID (0016).
+#   - CASH is manual, forever: CASH + provider = 400.
+#   - NO HOLDS: the shelf is untouched until verify settles the slip.
+#   - Every order mints an order number (O-000001, zero-padded, chain-wide).
+#   - The slip carries the provider details to show the customer:
+#     paystack.authorizationUrl (hosted checkout) or
+#     monnify.accountNumber / bankName / bankCode (reserved account).
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# Captures are session-scoped: a "No value is resolved" error means
+# re-send the setup requests from the top of this file.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Payments Seat Admin",
+  "email": "pay-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234581"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Payments Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345681",
+    "email": "pay-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires the primary cashier
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Payments Cashier",
+  "email": "pay-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234582",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Payments Probe Category {{$timestamp}}"
+}
+
+### 9 — Setup: the seat admin lists a product (₦12,000.00 selling price)
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-PAY-{{$timestamp}}",
+  "description": "Payments probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Setup: stock the shelf (10 units)
+# @name stock
+# Expected: 201 — an OPENING movement is recorded
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 11 — THE HAPPY PATH: bank transfer via Paystack
+# @name paystackSlip
+# Expected: 202 — status PENDING_PAYMENT, provider PAYSTACK,
+# orderNumber O-0000xx, paystack.authorizationUrl present, monnify absent,
+# paidAt absent, expiresAt present. Stock UNCHANGED (no holds).
+# (Without PAYSTACK_SECRET_KEY in .env: 400 payment-provider-not-configured)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 12 — Bank transfer via Monnify: the slip carries the reserved account
+# @name monnifySlip
+# Expected: 202 — provider MONNIFY, monnify.accountNumber / bankName /
+# bankCode present, paystack absent.
+# (CARD + MONNIFY is a 400 — Monnify is the transfer rail — see case 27.)
+# (Without the MONNIFY_* keys in .env: 400 payment-provider-not-configured)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "MONNIFY"
+}
+
+### 13 — Cash has no gateway: CASH + provider is refused
+# Expected: 400 — cash-gateway-not-allowed
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 14 — A provider outside PAYSTACK/MONNIFY
+# Expected: 400 — checkout-invalid
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "FLUTTERWAVE"
+}
+
+### 15 — No provider at all: the 0016 counter path is untouched
+# Expected: 201 — status PAID, orderNumber present, provider absent,
+# paidAt present (byte-for-byte the old contract)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 16 — Setup: hire a second cashier who will never open a session
+# @name hireSessionless
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Payments Sessionless Cashier",
+  "email": "pay-sessionless-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234583",
+  "jobTitle": "CASHIER"
+}
+
+### 17 — Setup: the sessionless cashier logs in
+# @name sessionlessLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireSessionless.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 18 — A valid cashier with NO session opens a gateway slip
+# Expected: 409 — session-conflict, "Open a session first."
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{sessionlessLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 19 — Setup: hire a SALES_ATTENDANT (the title-gate persona)
+# @name hireAttendant
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Payments Attendant",
+  "email": "pay-attendant-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234584",
+  "jobTitle": "SALES_ATTENDANT"
+}
+
+### 20 — Setup: the attendant logs in
+# @name attendantLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireAttendant.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 21 — The attendant opens a gateway slip — the title gate refuses
+# Expected: 403
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{attendantLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 22 — Setup: the seat admin enrolls a customer
+# @name enroll
+# Expected: 201 (200 on a later re-run — idempotent enroll)
+POST {{baseUrl}}/api/v1/customers
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Payments Shopper",
+  "phone": "+2348093030381"
+}
+
+### 23 — Walk-in with an attached customer: the slip rides their identity
+# Expected: 202 — customerPublicId = the enrolled customer's publicId
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK",
+  "customerPhone": "08093030381"
+}
+
+### 24 — A well-formed phone nobody has enrolled
+# Expected: 400 — "No customer with phone ... Enroll them first."
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK",
+  "customerPhone": "+2348099990081"
+}
+
+### 25 — An empty basket with a provider
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 26 — Anonymous gateway checkout — no token at all
+# Expected: 401
+POST {{baseUrl}}/api/v1/orders
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 27 — CARD + MONNIFY — Monnify is the transfer rail
+# Expected: 400 — detail mentions bank transfer (use TRANSFER with MONNIFY)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CARD",
+  "paymentProvider": "MONNIFY"
+}

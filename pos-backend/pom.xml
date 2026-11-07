@@ -107,6 +107,23 @@
 			<artifactId>stripe-java</artifactId>
 			<version>${stripe.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>com.monnify</groupId>
+			<artifactId>monnify-java-sdk</artifactId>
+			<version>1.2.0</version>
+		</dependency>
+
+		<!-- The Monnify SDK (all releases through 1.2.0) is a javax.validation 2.0-era client:
+		     its ValidationUtil static bootstrap needs a javax-namespace provider, which Spring
+		     Boot 4 no longer ships (its Hibernate Validator 8 is jakarta-only). Apache BVal 2.0.6
+		     is that provider under a different GA, so it coexists with the jakarta HV 8 instead
+		     of shadowing it (same-GA hibernate-validator would win dependency mediation and
+		     break the jakarta side). -->
+		<dependency>
+			<groupId>org.apache.bval</groupId>
+			<artifactId>org.apache.bval.bundle</artifactId>
+			<version>2.0.6</version>
+		</dependency>
 
 		<!-- Argon2id password hashing (Spring Security's Argon2PasswordEncoder needs BouncyCastle) -->
 		<dependency>

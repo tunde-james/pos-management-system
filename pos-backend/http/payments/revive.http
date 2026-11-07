@@ -1,0 +1,264 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Payments API — REVIVE (POST /api/v1/orders/{publicId}/payment/revive)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Payments module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - Sandbox keys in .env (PAYSTACK_SECRET_KEY at minimum) for the 202s.
+#
+# Contract (ticket 0017):
+#   - Only TTL-expired slips revive — alive slips are 409, as are FAILED /
+#     EXPIRED-STOCK_GONE / PAID and every counter-settled order.
+#   - Revive re-arms the clock (fresh TTL) and re-emits the STORED slip
+#     unchanged — the customer keeps the same link / account.
+#   - No revival cap in v1: expire, revive, expire, revive.
+#   - Only the ORIGINAL operator with their own ACTIVE session (403 / 409).
+#
+# The live TTL is 20 MINUTES (app.payments.pending-ttl), so request 16 is
+# labeled for a later send. Every other request is order-independent.
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Revive Seat Admin",
+  "email": "rev-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234601"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Revive Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345601",
+    "email": "rev-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires the slip's cashier
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Revive Cashier",
+  "email": "rev-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234602",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Revive Probe Category {{$timestamp}}"
+}
+
+### 9 — Setup: the seat admin lists a product
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-REV-{{$timestamp}}",
+  "description": "Revive probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Setup: stock the shelf (10 units)
+# @name stock
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 11 — Setup: open a Paystack slip (the slip this file revives)
+# @name slip
+# Expected: 202
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 12 — Reviving an ALIVE slip — there is nothing to rescue yet
+# Expected: 409 — order-not-revivable, "This slip is still alive..."
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/revive
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 13 — Setup: a counter-settled sale (no gateway leg to revive)
+# @name cashOrder
+# Expected: 201 — PAID
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 14 — Reviving a counter-settled order
+# Expected: 409 — order-not-revivable, "Counter-settled orders have
+# nothing to revive."
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/payment/revive
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 15 — Reviving an order id nobody rings
+# Expected: 404
+POST {{baseUrl}}/api/v1/orders/00000000-0000-0000-0000-000000000009/payment/revive
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 16 — THE RESCUE: send this request 20+ minutes after request 11
+# Expected: 200 — status PENDING_PAYMENT, a FRESH expiresAt (~now + 20m),
+# and the SAME paystack.authorizationUrl as request 11 (the stored slip
+# is re-emitted, not re-minted). The revived slip can now be verified.
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/revive
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 17 — Setup: hire a SECOND cashier (each cashier to their own till)
+# @name hireOther
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Revive Stranger Cashier",
+  "email": "rev-stranger-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234603",
+  "jobTitle": "CASHIER"
+}
+
+### 18 — Setup: the stranger logs in and opens their own session
+# @name strangerLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireOther.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 19 — Setup: the stranger opens a session
+# @name strangerSession
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{strangerLogin.response.body.accessToken}}
+
+### 20 — Another cashier revives THIS slip — each cashier to their own till
+# Expected: 403
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/revive
+Authorization: Bearer {{strangerLogin.response.body.accessToken}}
+
+### 21 — Setup: the slip's cashier CLOSES their session
+# @name closeSession
+# Expected: 200
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/close
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 22 — Revive against a CLOSED session
+# Expected: 409 — session-conflict, "Open a session first."
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/revive
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 23 — Anonymous revive tap
+# Expected: 401
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/revive

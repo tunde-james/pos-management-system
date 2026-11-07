@@ -1,0 +1,278 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Payments API — VERIFY (POST /api/v1/orders/{publicId}/payment/verify)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up with the Payments module: docker compose up -d --build
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - Sandbox keys in .env (PAYSTACK_SECRET_KEY at minimum) for the 202s.
+#
+# Contract (ticket 0017):
+#   - The decision tap: clock first (a TTL-dead slip answers EXPIRED and
+#     the bank is NEVER consulted), then the gateway, then the shelf
+#     moves exactly once.
+#   - Only the ORIGINAL operator with their own ACTIVE session (403 / 409).
+#   - Counter-settled orders have no gateway flow (409).
+#   - Live sandbox truth: nothing actually pays in the probe, so a real
+#     verify answers 200 PENDING_PAYMENT ("nothing arrived yet"). The
+#     PAID / mismatch / decline outcomes live in the MockMvc suite with
+#     the fake gateway; the post-TTL request below is labeled for the
+#     20-minute live TTL.
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Verify Seat Admin",
+  "email": "ver-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234591"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Verify Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345691",
+    "email": "ver-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: seat admin hires the slip's cashier
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Verify Cashier",
+  "email": "ver-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234592",
+  "jobTitle": "CASHIER"
+}
+
+### 6 — Setup: the cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the cashier opens a session
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 8 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Verify Probe Category {{$timestamp}}"
+}
+
+### 9 — Setup: the seat admin lists a product
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-VER-{{$timestamp}}",
+  "description": "Verify probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 10 — Setup: stock the shelf (10 units)
+# @name stock
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 11 — Setup: open a Paystack slip (the slip this file verifies)
+# @name slip
+# Expected: 202
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 12 — THE DECISION TAP: nothing has paid in the sandbox yet
+# Expected: 200 — status PENDING_PAYMENT (the bank says "nothing arrived
+# yet"). If this slips past the 20-minute TTL first: 200 EXPIRED with
+# statusReason TTL_TIMEOUT, and the gateway was never even asked.
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/verify
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 13 — Tap again: a still-pending slip tolerates repeat taps
+# Expected: 200 — PENDING_PAYMENT again (a PAID slip would answer 409
+# order-already-settled instead — the double-tap guard)
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/verify
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 14 — Setup: a counter-settled sale (no gateway leg)
+# @name cashOrder
+# Expected: 201 — PAID
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 15 — Verifying a counter-settled order — there is no gateway flow
+# Expected: 409 — order-not-gateway-settled
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/payment/verify
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 16 — Verifying an order id nobody rings
+# Expected: 404
+POST {{baseUrl}}/api/v1/orders/00000000-0000-0000-0000-000000000009/payment/verify
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 17 — Setup: hire a SECOND cashier (each cashier to their own till)
+# @name hireOther
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Verify Stranger Cashier",
+  "email": "ver-stranger-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234593",
+  "jobTitle": "CASHIER"
+}
+
+### 18 — Setup: the stranger logs in and opens their own session
+# @name strangerLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireOther.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 19 — Setup: the stranger opens a session
+# @name strangerSession
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{strangerLogin.response.body.accessToken}}
+
+### 20 — Another cashier taps THIS slip — each cashier to their own till
+# Expected: 403
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/verify
+Authorization: Bearer {{strangerLogin.response.body.accessToken}}
+
+### 21 — Setup: the slip's cashier LOCKS their session
+# @name lockSession
+# Expected: 200
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/lock
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 22 — Verify against a LOCKED session
+# Expected: 409 — session-conflict, "Your session is locked..."
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/verify
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 23 — Setup: the cashier resumes their session (unlocks it)
+# @name resumeSession
+# Expected: 200
+POST {{baseUrl}}/api/v1/sessions/{{session.response.body.publicId}}/resume
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 24 — THE POST-TTL TAP: send this request 20+ minutes after request 11
+# Expected: 200 — status EXPIRED, statusReason TTL_TIMEOUT; stock still
+# untouched and the gateway was never consulted. (A revived slip — see
+# revive.http — can still be paid afterwards.)
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/verify
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 25 — Anonymous verify tap
+# Expected: 401
+POST {{baseUrl}}/api/v1/orders/{{slip.response.body.publicId}}/payment/verify
