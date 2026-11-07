@@ -93,7 +93,7 @@ public class MonnifyGateway {
 
         // The order number stays the verification handle for the slip's life.
         return new InitiateData(
-                orderNumber, bank.getAccountNumber(), bank.getBankName(), bank.getBankCode(), bank.getExpiresOn());
+                orderNumber, bank.getAccountNumber(), bank.getBankName(), bank.getBankCode(), accountExpiryOf(bank));
     }
 
     /** Ask Monnify what happened to the payment
@@ -121,5 +121,18 @@ public class MonnifyGateway {
 
     private long kobo(BigDecimal amountNaira) {
         return amountNaira.movePointRight(2).longValueExact();
+    }
+
+    static LocalDateTime accountExpiryOf(BankTransferResponse bank) {
+
+        if (bank.getExpiresOn() != null) {
+            return bank.getExpiresOn();
+        }
+
+        if (bank.getRequestTime() != null) {
+            return LocalDateTime.parse(bank.getRequestTime()).plusSeconds(bank.getAccountDurationSeconds());
+        }
+
+        return null;
     }
 }
