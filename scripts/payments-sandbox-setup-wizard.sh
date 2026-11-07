@@ -22,7 +22,7 @@ echo "  2. Make sure you are in TEST MODE (the toggle is top-right)."
 echo "  3. Settings -> API Keys -> copy the TEST secret key (starts sk_test_)."
 echo "  4. While you are here, note the test card:"
 echo "       4084 0840 8408 4081   (any future expiry, any CVV)"
-read -r -p "  Paste the Paystack test secret key: " PAYSTACK_KEY
+read -r -s -p "  Paste the Paystack test secret key: " PAYSTACK_KEY
 case "$PAYSTACK_KEY" in
   sk_test_*) echo "  -> shape OK." ;;
   *) echo "  -> that does not start with sk_test_ — double-check you copied the TEST key."; exit 1 ;;

@@ -1,7 +1,5 @@
 package com.devtunde.posbackend.payments.internal.config;
 
-import java.time.Duration;
-
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
@@ -27,7 +25,7 @@ public class PaymentsConfig {
 
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(properties.providers().paystack().connectTimeout());
-        factory.setReadTimeout(Duration.ofSeconds(15));
+        factory.setReadTimeout(properties.providers().paystack().readTimeout());
 
         RestClient restClient = RestClient.builder()
                 .baseUrl(properties.providers().paystack().baseUrl())

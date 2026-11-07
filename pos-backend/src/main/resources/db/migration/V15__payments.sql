@@ -22,7 +22,7 @@ UPDATE orders o
       ) AS rn
     FROM orders
   ) t ON o.id = t.id
-SET o.order_number = CONCAT('O-', LPAD(t.rn, 6, '0'));
+SET o.order_number = CONCAT('O-', LPAD(t.rn, GREATEST(6, LENGTH(t.rn)), '0'));
 ALTER TABLE orders
 ADD CONSTRAINT uk_orders_number UNIQUE (order_number);
 -- The chain-wide number counter: one row, id = 1, forever.
