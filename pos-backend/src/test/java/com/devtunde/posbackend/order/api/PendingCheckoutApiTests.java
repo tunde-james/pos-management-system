@@ -254,12 +254,10 @@ class PendingCheckoutApiTests extends AbstractPaymentsTest {
                         .header("Content-Type", "application/json")
                         .content("""
                                    {
-                                       "fullName":
- "Loyal Gateway Shopper",
+                                       "fullName": "Loyal Gateway Shopper",
                                        "phone": "%s"
                                    }
-
- """.formatted(CANONICAL_PHONE)))
+                                     """.formatted(CANONICAL_PHONE)))
                 .andExpect(status().is2xxSuccessful())
                 .andReturn();
         String customerPublicId = jsonOf(enroll).get("publicId").asText();
@@ -268,8 +266,7 @@ class PendingCheckoutApiTests extends AbstractPaymentsTest {
                    {
                        "lines": [%s],
                        "paymentMethod": "TRANSFER",
-                       "paymentProvider":
- "PAYSTACK",
+                       "paymentProvider": "PAYSTACK",
                        "customerPhone": "%s"
                    }
                    """.formatted(line(product, 1), CANONICAL_PHONE);
@@ -310,5 +307,23 @@ class PendingCheckoutApiTests extends AbstractPaymentsTest {
         assertThat(secondNumber).matches(ORDER_NUMBER.pattern());
 
         assertThat(firstNumber).isNotEqualTo(secondNumber);
+    }
+
+    @Test
+    @DisplayName("Monnify is the transfer rail: CARD + MONNIFY = 400, use TRANSFER")
+    void cardWithMonnifyReturns400() throws Exception {
+
+        ManagedStore store = seedStore("Pending Store Thirteen");
+        TillOperator cashier = employ(store.storeId(), "CASHIER", "CardRail Cashier");
+        openSession(cashier.token());
+        String category = createCategoryAsAdmin("Pending Category Thirteen");
+        String product = listProductAs(store, category, "CardRail Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        MvcResult result = pendingCheckout(cashier.token(), line(product, 1), "CARD", "MONNIFY");
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(400);
+
+        assertThat(jsonOf(result).get("detail").asText()).contains("bank transfer");
     }
 }

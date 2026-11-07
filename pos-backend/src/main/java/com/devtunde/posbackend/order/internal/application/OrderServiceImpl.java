@@ -39,7 +39,6 @@ import com.devtunde.posbackend.order.api.exception.SessionConflictException;
 import com.devtunde.posbackend.order.internal.KoboFormatter;
 import com.devtunde.posbackend.order.internal.domain.Order;
 import com.devtunde.posbackend.order.internal.domain.OrderLine;
-import com.devtunde.posbackend.order.internal.domain.OrderSequence;
 import com.devtunde.posbackend.order.internal.domain.OrderStatus;
 import com.devtunde.posbackend.order.internal.domain.OrderStatusReason;
 import com.devtunde.posbackend.order.internal.domain.PaymentMethod;
@@ -47,7 +46,6 @@ import com.devtunde.posbackend.order.internal.domain.SessionStatus;
 import com.devtunde.posbackend.order.internal.domain.TillSession;
 import com.devtunde.posbackend.order.internal.persistence.OrderLineRepository;
 import com.devtunde.posbackend.order.internal.persistence.OrderRepository;
-import com.devtunde.posbackend.order.internal.persistence.OrderSequenceRepository;
 import com.devtunde.posbackend.order.internal.persistence.TillSessionRepository;
 import com.devtunde.posbackend.payments.api.PaymentProvider;
 import com.devtunde.posbackend.product.api.ProductService;
@@ -61,7 +59,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderRepository orderRepository;
     private final OrderLineRepository orderLineRepository;
     private final TillSessionRepository tillSessionRepository;
-    private final OrderSequenceRepository orderSequenceRepository;
+    private final OrderNumberAllocator orderNumberAllocator;
     private final EmployeeService employeeService;
     private final ProductService productService;
     private final InventoryService inventoryService;
@@ -76,7 +74,7 @@ public class OrderServiceImpl implements OrderService {
             OrderRepository orderRepository,
             OrderLineRepository orderLineRepository,
             TillSessionRepository tillSessionRepository,
-            OrderSequenceRepository orderSequenceRepository,
+            OrderNumberAllocator orderNumberAllocator,
             EmployeeService employeeService,
             ProductService productService,
             InventoryService inventoryService,
@@ -90,7 +88,7 @@ public class OrderServiceImpl implements OrderService {
         this.orderRepository = orderRepository;
         this.orderLineRepository = orderLineRepository;
         this.tillSessionRepository = tillSessionRepository;
-        this.orderSequenceRepository = orderSequenceRepository;
+        this.orderNumberAllocator = orderNumberAllocator;
         this.employeeService = employeeService;
         this.productService = productService;
         this.inventoryService = inventoryService;
@@ -117,10 +115,14 @@ public class OrderServiceImpl implements OrderService {
             throw new CashGatewayNotAllowedException();
         }
 
+        if (provider == PaymentProvider.MONNIFY && method == PaymentMethod.CARD) {
+            throw new CheckoutInvalidException("Monnify settles by bank transfer — use TRANSFER with MONNIFY.");
+        }
+
         UUID customerPublicId = resolveCustomer(request.customerPhone());
 
         Basket basket = snapshotBasket(session, request);
-        String orderNumber = mintOrderNumber();
+        String orderNumber = orderNumberAllocator.mint();
 
         if (provider == null) {
             return settleAtCounter(session, customerPublicId, method, request.paymentReference(), orderNumber, basket);
@@ -134,7 +136,7 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse verifyPayment(UUID publicId) {
 
         UserViewResponse caller = userAccountService.currentUser();
-        Order order = findOrder(publicId);
+        Order order = findOrderLocked(publicId);
         TillSession session = findOrderSession(order);
         requireOperatorOf(caller, session);
 
@@ -150,7 +152,7 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse revivePayment(UUID publicId) {
 
         UserViewResponse caller = userAccountService.currentUser();
-        Order order = findOrder(publicId);
+        Order order = findOrderLocked(publicId);
         TillSession session = findOrderSession(order);
         requireOperatorOf(caller, session);
 
@@ -202,13 +204,12 @@ public class OrderServiceImpl implements OrderService {
     public ReceiptResponse getReceipt(UUID publicId) {
 
         Order order = findOrder(publicId);
+        TillSession session = findOrderSession(order);
+        requireReceiptAccess(session);
 
         if (order.getStatus() != OrderStatus.PAID) {
             throw new OrderNotPaidException();
         }
-
-        TillSession session = findOrderSession(order);
-        requireReceiptAccess(session);
 
         StoreApiResponse store = storeService.getStoreByPublicId(session.getStoreId());
         UserViewResponse cashier = userAccountService.findByPublicId(session.getOperatorPublicId());
@@ -331,6 +332,11 @@ public class OrderServiceImpl implements OrderService {
         return tillSessionRepository.findById(order.getSessionId()).orElseThrow(OrderNotFoundException::new);
     }
 
+    private Order findOrderLocked(UUID publicId) {
+
+        return orderRepository.findByPublicIdForUpdate(publicId).orElseThrow(OrderNotFoundException::new);
+    }
+
     private void saveOrder(Order order, List<OrderLineResponse> lines) {
 
         orderRepository.saveAndFlush(order);
@@ -353,15 +359,6 @@ public class OrderServiceImpl implements OrderService {
                         koboFormatter.format(line.getUnitPriceKobo()),
                         koboFormatter.format(line.getLineTotalKobo())))
                 .toList();
-    }
-
-    private String mintOrderNumber() {
-
-        orderSequenceRepository.increment();
-        OrderSequence sequence = orderSequenceRepository
-                .findById(1)
-                .orElseThrow(() -> new IllegalStateException("Order sequence row is missing."));
-        return "O-" + String.format("%06d", sequence.getCurrentValue());
     }
 
     // ---- snapshot & shaping ----

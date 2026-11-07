@@ -205,7 +205,7 @@ class TrayAndReceiptApiTests extends AbstractPaymentsTest {
 
         assertThat(receipt.getResponse().getStatus()).isEqualTo(200);
 
-        assertThat(jsonOf(receipt).get("displayTotal").asText()).isEqualTo("₦12000.00");
+        assertThat(jsonOf(receipt).get("total").asText()).isEqualTo("₦12000.00");
     }
 
     @Test

@@ -69,7 +69,7 @@ public class Order {
     @Column(name = "total_kobo", nullable = false)
     private long totalKobo;
 
-    @Column(name = "paid_at", updatable = false)
+    @Column(name = "paid_at")
     private LocalDateTime paidAt;
 
     @Column(name = "expires_at")
@@ -90,6 +90,9 @@ public class Order {
 
     @Column(name = "provider_bank_code", length = 10)
     private String providerBankCode;
+
+    @Column(name = "provider_account_expires_at")
+    private LocalDateTime providerAccountExpiresAt;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -142,7 +145,8 @@ public class Order {
             String providerUrl,
             String accountNumber,
             String bankName,
-            String bankCode) {
+            String bankCode,
+            LocalDateTime accountExpiresAt) {
 
         this.provider = provider;
         this.paymentReference = providerReference;
@@ -150,6 +154,7 @@ public class Order {
         this.providerAccountNumber = accountNumber;
         this.providerBankName = bankName;
         this.providerBankCode = bankCode;
+        this.providerAccountExpiresAt = accountExpiresAt;
     }
 
     public void assignOrderNumber(String orderNumber) {
@@ -176,7 +181,7 @@ public class Order {
         this.status = OrderStatus.EXPIRED;
         this.statusReason = reason;
     }
-    
+
     public void reviveUntil(LocalDateTime newExpiry) {
         this.status = OrderStatus.PENDING_PAYMENT;
         this.statusReason = null;

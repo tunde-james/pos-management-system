@@ -18,6 +18,7 @@ import com.devtunde.posbackend.order.api.exception.AmountMismatchException;
 import com.devtunde.posbackend.order.api.exception.OrderAlreadySettledException;
 import com.devtunde.posbackend.order.api.exception.OrderNotGatewaySettledException;
 import com.devtunde.posbackend.order.api.exception.OrderNotRevivableException;
+import com.devtunde.posbackend.order.api.exception.TransferAccountExpiredException;
 import com.devtunde.posbackend.order.internal.domain.Order;
 import com.devtunde.posbackend.order.internal.domain.OrderStatus;
 import com.devtunde.posbackend.order.internal.domain.OrderStatusReason;
@@ -75,7 +76,8 @@ public class PendingPaymentService {
                 initiated.authorizationUrl(),
                 initiated.accountNumber(),
                 initiated.bankName(),
-                initiated.bankCode());
+                initiated.bankCode(),
+                initiated.accountExpiresAt());
     }
 
     public Order verify(Order order, TillSession session, List<OrderLineResponse> lines) {
@@ -112,21 +114,41 @@ public class PendingPaymentService {
         if (order.getProvider() == null) {
             throw new OrderNotRevivableException("Counter-settled orders have nothing to revive.");
         }
+
         if (order.getStatus() == OrderStatus.PENDING_PAYMENT) {
             if (order.isAlive()) {
                 throw new OrderNotRevivableException("This slip is still alive — nothing to revive.");
             }
 
-            order.reviveUntil(LocalDateTime.now().plus(pendingTtl));
+            order.reviveUntil(revivalExpiryOf(order));
             return order;
         }
+
         if (order.getStatus() == OrderStatus.EXPIRED && order.getStatusReason() == OrderStatusReason.TTL_TIMEOUT) {
 
-            order.reviveUntil(LocalDateTime.now().plus(pendingTtl));
+            order.reviveUntil(revivalExpiryOf(order));
             return order;
         }
+
         throw new OrderNotRevivableException(
                 "Only TTL-expired slips can be revived (this one is " + order.getStatus() + ").");
+    }
+
+    private LocalDateTime revivalExpiryOf(Order order) {
+
+        LocalDateTime until = LocalDateTime.now().plus(pendingTtl);
+
+        if (order.getProvider() != PaymentProvider.MONNIFY) {
+            return until;
+        }
+        LocalDateTime accountExpiresAt = order.getProviderAccountExpiresAt();
+        if (accountExpiresAt == null) {
+            return until;
+        }
+        if (!accountExpiresAt.isAfter(LocalDateTime.now())) {
+            throw new TransferAccountExpiredException();
+        }
+        return accountExpiresAt.isBefore(until) ? accountExpiresAt : until;
     }
 
     private Order settleFromGateway(

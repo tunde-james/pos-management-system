@@ -59,7 +59,7 @@ class CustomerReceiptApiTests extends AbstractOrderTest {
         assertThat(body.get("paymentMethod").asText()).isEqualTo("CASH");
         assertThat(body.get("paidAt")).isNotNull();
 
-        assertThat(body.get("displayTotal").asText()).isEqualTo("₦24000.00");
+        assertThat(body.get("total").asText()).isEqualTo("₦24000.00");
 
         JsonNode line = body.get("lines").get(0);
 

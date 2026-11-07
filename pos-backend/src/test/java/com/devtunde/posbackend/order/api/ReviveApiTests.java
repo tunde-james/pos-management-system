@@ -2,6 +2,8 @@ package com.devtunde.posbackend.order.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDateTime;
+
 import org.springframework.test.web.servlet.MvcResult;
 
 import org.junit.jupiter.api.DisplayName;
@@ -199,5 +201,29 @@ class ReviveApiTests extends AbstractPaymentsTest {
         MvcResult result = reviveOrder(cashier.token(), orderPublicId);
 
         assertThat(result.getResponse().getStatus()).isEqualTo(409);
+    }
+
+    @Test
+    @DisplayName("A Monnify slip whose bank account has lapsed cannot be revived: 409")
+    void reviveMonnifySlipWithDeadAccountReturns409() throws Exception {
+
+        ManagedStore store = seedStore("Revive Store Nine");
+        TillOperator cashier = employ(store.storeId(), "CASHIER", "Lapsed Cashier");
+        openSession(cashier.token());
+        String category = createCategoryAsAdmin("Revive Category Nine");
+        String product = listProductAs(store, category, "LapsedAccount Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        fakeGateway.setAccountExpiresAt(LocalDateTime.now().minusSeconds(1));
+        MvcResult slip = pendingCheckout(cashier.token(), line(product, 1), "TRANSFER", "MONNIFY");
+        String orderPublicId = jsonOf(slip).get("publicId").asText();
+
+        waitForTtl();
+
+        MvcResult result = reviveOrder(cashier.token(), orderPublicId);
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(409);
+
+        assertThat(jsonOf(result).get("detail").asText()).contains("expired");
     }
 }

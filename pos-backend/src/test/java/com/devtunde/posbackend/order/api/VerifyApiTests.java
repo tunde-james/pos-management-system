@@ -43,7 +43,10 @@ class VerifyApiTests extends AbstractPaymentsTest {
 
         assertThat(jsonOf(result).get("paidAt")).isNotNull();
 
+        assertThat(jsonOf(machineOrder(cashier.token(), orderPublicId)).get("paidAt")).isNotNull();
+
         assertThat(jsonOf(result).get("paymentReference").asText()).isEqualTo(providerReference);
+        
         assertThat(inventoryQuantity(store, product)).isEqualTo(6);
 
         MvcResult movements = mockMvc.perform(MockMvcRequestBuilders.get(

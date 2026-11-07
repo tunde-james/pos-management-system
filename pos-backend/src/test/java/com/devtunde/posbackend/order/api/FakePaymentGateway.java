@@ -1,5 +1,6 @@
 package com.devtunde.posbackend.order.api;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -23,16 +24,24 @@ public class FakePaymentGateway implements PaymentGateway {
     private GatewayVerifyStatus nextVerifyStatus = GatewayVerifyStatus.PENDING;
     private Long nextVerifyAmountKobo = null;
     private long verifyCallCount = 0;
+    private LocalDateTime accountExpiresAt = LocalDateTime.now().plusDays(1);
 
     public void reset() {
         this.nextVerifyStatus = GatewayVerifyStatus.PENDING;
         this.nextVerifyAmountKobo = null;
         this.verifyCallCount = 0;
+        this.accountExpiresAt = LocalDateTime.now().plusDays(1);
     }
 
     public void setNextVerify(GatewayVerifyStatus status, Long amountKobo) {
         this.nextVerifyStatus = status;
         this.nextVerifyAmountKobo = amountKobo;
+    }
+
+    /** Test knob: pretend the provider's bank account
+     * lapses at a specific time. */
+    public void setAccountExpiresAt(LocalDateTime accountExpiresAt) {
+        this.accountExpiresAt = accountExpiresAt;
     }
 
     public long verifyCallCount() {
@@ -47,25 +56,28 @@ public class FakePaymentGateway implements PaymentGateway {
 
         if (request.paymentProvider() == PaymentProvider.PAYSTACK) {
             return new GatewayInitiateResult(
-                    reference, "https://fake.paystack.test/checkout/" + reference, null, null, null);
+                    reference, "https://fake.paystack.test/checkout/" + reference, null, null, null, null);
         }
-        return new GatewayInitiateResult(reference, null, "0123456789", "Fake Bank", "001");
+        return new GatewayInitiateResult(reference, null, "0123456789", "Fake Bank", "001", accountExpiresAt);
     }
 
     @Override
     public GatewayVerifyResult verify(GatewayVerifyRequest request) {
-        
+
         verifyCallCount++;
 
         if (nextVerifyStatus == GatewayVerifyStatus.PENDING) {
             return new GatewayVerifyResult(GatewayVerifyStatus.PENDING, 0L, "nothing arrived yet");
         }
+
         if (nextVerifyStatus == GatewayVerifyStatus.FAILED) {
             return new GatewayVerifyResult(GatewayVerifyStatus.FAILED, 0L, "gateway declined");
         }
+
         long amount = nextVerifyAmountKobo != null
                 ? nextVerifyAmountKobo
                 : initiatedAmounts.getOrDefault(request.providerReference(), 0L);
+
         return new GatewayVerifyResult(GatewayVerifyStatus.SUCCESS, amount, "settled");
     }
 }

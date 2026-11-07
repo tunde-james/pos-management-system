@@ -180,10 +180,11 @@ Content-Type: application/json
   "paymentProvider": "PAYSTACK"
 }
 
-### 12 — Card via Monnify: the slip carries the reserved account
+### 12 — Bank transfer via Monnify: the slip carries the reserved account
 # @name monnifySlip
 # Expected: 202 — provider MONNIFY, monnify.accountNumber / bankName /
 # bankCode present, paystack absent.
+# (CARD + MONNIFY is a 400 — Monnify is the transfer rail — see case 27.)
 # (Without the MONNIFY_* keys in .env: 400 payment-provider-not-configured)
 POST {{baseUrl}}/api/v1/orders
 Authorization: Bearer {{cashierLogin.response.body.accessToken}}
@@ -196,7 +197,7 @@ Content-Type: application/json
       "quantity": 1
     }
   ],
-  "paymentMethod": "CARD",
+  "paymentMethod": "TRANSFER",
   "paymentProvider": "MONNIFY"
 }
 
@@ -411,4 +412,21 @@ Content-Type: application/json
   ],
   "paymentMethod": "TRANSFER",
   "paymentProvider": "PAYSTACK"
+}
+
+### 27 — CARD + MONNIFY — Monnify is the transfer rail
+# Expected: 400 — detail mentions bank transfer (use TRANSFER with MONNIFY)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CARD",
+  "paymentProvider": "MONNIFY"
 }
