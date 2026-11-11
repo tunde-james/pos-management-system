@@ -1,0 +1,530 @@
+### ──────────────────────────────────────────────────────────────────────────
+# Refund API — REFUND A PAID ORDER (POST /api/v1/orders/{publicId}/refunds)
+#
+# How to run: VS Code REST Client — click "Send Request" top to bottom.
+#
+# Prerequisites:
+#   - Docker stack up WITH THE REFUND BRANCH BUILT:
+#       docker compose up -d --build --force-recreate pos-backend
+#     (V19 must have applied — a pre-refund container 404s the endpoint.)
+#   - Seeded chain admin exists: admin@devtunde.com / Password123!
+#   - For case 35 only: PAYSTACK_SECRET_KEY in .env (sandbox).
+#
+# Contract (ticket 0019):
+#   - One operation: refund. NO void. Post-sale service act — no session.
+#   - Whole order lines only; each line refundable ONCE (database guard);
+#     multiple refunds per order are legal.
+#   - Money = the FROZEN line totals in kobo (never re-priced).
+#   - Gate: the store's MANAGER, the seat admin, or the chain admin.
+#     CASHIER excluded — including the selling cashier.
+#   - Gateway-paid orders: reversed through the ORIGINAL provider
+#     (providerRefundReference rides the response; no returnMethod).
+#   - Counter-settled orders: manual return — returnMethod CASH |
+#     BANK_TRANSFER is REQUIRED and recorded.
+#   - Stock: RESTOCKED (default) returns units with a REFUND movement;
+#     DAMAGED writes no movement (spoilt goods leave the shelf).
+#   - REFUNDED is DERIVED: every line refunded → the machine view says
+#     REFUNDED/FULLY_REFUNDED; the order row itself stays PAID.
+#   - The customer receipt is the sale's document — unchanged by refunds.
+#
+# `# Expected:` labels the status each request proves.
+# Tokens expire after 15 MINUTES — re-send the setup from the top.
+# Captures are session-scoped, and STALE ONES ARE DANGEROUS: re-sending
+# one case (e.g. 33) after a newer setup makes its variables point at a
+# DIFFERENT run's store — the API then answers 400 ("Product ... is not
+# available in this store") with NO warning. Safe pattern: close this
+# tab, reopen it (clears every capture), send 1 -> 36 in one sitting.
+# All data is FAKE (devtunde.com emails, Nigerian numbers).
+# ──────────────────────────────────────────────────────────────────────────
+
+@baseUrl = http://localhost:4000
+
+### 1 — Setup: chain admin logs in
+# @name adminLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@devtunde.com",
+  "password": "Password123!"
+}
+
+### 2 — Setup: mint the store's seat admin (fresh persona per run)
+# @name seatSignup
+# Expected: 201
+POST {{baseUrl}}/api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "fullName": "Probe Refund Seat Admin",
+  "email": "pay-refund-seat-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234591"
+}
+
+### 3 — Setup: seat admin logs in
+# @name seatLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{seatSignup.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 4 — Setup: chain admin creates the store, seating that admin
+# @name store
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "brand": "Refund Probe Store {{$timestamp}}",
+  "storeType": "KIOSK",
+  "storeAdminPublicId": "{{seatLogin.response.body.user.publicId}}",
+  "contact": {
+    "address": "Probe Way",
+    "phone": "08012345691",
+    "email": "pay-refund-store-{{$timestamp}}@devtunde.com"
+  }
+}
+
+### 5 — Setup: the seat admin hires the store's MANAGER (refund authority)
+# @name hireManager
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Refund Manager",
+  "email": "pay-refund-manager-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234594",
+  "jobTitle": "MANAGER"
+}
+
+### 6 — Setup: the manager logs in
+# @name managerLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireManager.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 7 — Setup: the seat admin hires the primary cashier (the seller)
+# @name hire
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Refund Cashier",
+  "email": "pay-refund-cashier-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234592",
+  "jobTitle": "CASHIER"
+}
+
+### 8 — Setup: the cashier logs in
+# @name cashierLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hire.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 9 — Setup: the cashier opens a session
+# @name session
+# Expected: 201
+POST {{baseUrl}}/api/v1/sessions
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 10 — Setup: chain admin creates a category
+# @name category
+# Expected: 201
+POST {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{adminLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Refund Probe Category {{$timestamp}}"
+}
+
+### 11 — Setup: the seat admin lists the milk (₦12,000.00 selling price)
+# @name listing
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Milk 1L",
+  "sku": "PROBE-REF-{{$timestamp}}",
+  "description": "Refund probe item",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 15000.00,
+  "sellingPrice": 12000.00
+}
+
+### 12 — Setup: stock the milk shelf (10 units)
+# @name stock
+# Expected: 201 — an OPENING movement is recorded
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listing.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 13 — Setup: list a second product — the bread (₦4,000.00)
+# @name listingBread
+# Expected: 201
+POST {{baseUrl}}/api/v1/products/store/{{store.response.body.publicId}}
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Probe Bread",
+  "sku": "PROBE-REF-B-{{$timestamp}}",
+  "description": "Refund probe item two",
+  "brand": "TestBrand",
+  "image": "https://cdn.devtunde.com/item.png",
+  "categoryPublicId": "{{category.response.body.publicId}}",
+  "mrp": 5000.00,
+  "sellingPrice": 4000.00
+}
+
+### 14 — Setup: stock the bread shelf (10 units)
+# @name stockBread
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/inventory
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "productPublicId": "{{listingBread.response.body.publicId}}",
+  "quantity": 10,
+  "lowStockThreshold": 1
+}
+
+### 15 — Setup: hire a SALES_ATTENDANT (the other 403 persona)
+# @name hireAttendant
+# Expected: 201
+POST {{baseUrl}}/api/v1/stores/{{store.response.body.publicId}}/employees
+Authorization: Bearer {{seatLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Probe Refund Attendant",
+  "email": "pay-refund-attendant-{{$timestamp}}@devtunde.com",
+  "password": "Password123!",
+  "phone": "+2348091234593",
+  "jobTitle": "SALES_ATTENDANT"
+}
+
+### 16 — Setup: the attendant logs in
+# @name attendantLogin
+# Expected: 200
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{hireAttendant.response.body.user.email}}",
+  "password": "Password123!"
+}
+
+### 17 — Setup: the cashier sells one milk, cash
+# @name cashOrder
+# Expected: 201 — status PAID, totalKobo 1200000
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 18 — THE HAPPY PATH: the manager refunds the milk, cash back
+# Expected: 201 — totalKobo 1200000 (the FROZEN line total),
+# displayTotal "₦12000.00", returnMethod "CASH", providerRefundReference null, one line with
+# disposition "RESTOCKED". Stock back on the shelf (9 → 10).
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 19 — The same line a second time — the database guard says no
+# Expected: 409 — refund-line-already-refunded
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 20 — Machine receipt after the refund: the sale is now fully refunded
+# Expected: 200 — status "REFUNDED", statusReason "FULLY_REFUNDED"
+# (DERIVED — the order row is still PAID), refunds array with ONE entry:
+# totalKobo 1200000, displayTotal "₦12000.00", returnMethod "CASH", providerRefundReference null,
+# refundedAt present. Read by the SERVING operator (the manager has no
+# receipt access — that door is the operator/seat-admin/chain-admin gate).
+GET {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 21 — Customer receipt after the refund: the sale's document is untouched
+# Expected: 200 — total "₦12000.00", NO refunds field
+GET {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/receipt
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 22 — Setup: the cashier sells milk + bread, cash (a two-line order)
+# @name twoLineOrder
+# Expected: 201 — totalKobo 1600000
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    },
+    {
+      "productPublicId": "{{listingBread.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+### 23 — A counter-settled refund WITHOUT a return method
+# Expected: 400 — "Record how the money went back: CASH or BANK_TRANSFER."
+POST {{baseUrl}}/api/v1/orders/{{twoLineOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ]
+}
+
+### 24 — The manager refunds the milk line, bank transfer back to the customer
+# Expected: 201 — totalKobo 1200000, displayTotal "₦12000.00", returnMethod "BANK_TRANSFER"
+POST {{baseUrl}}/api/v1/orders/{{twoLineOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "BANK_TRANSFER"
+}
+
+### 25 — Machine receipt after a PARTIAL refund: still PAID
+# Expected: 200 — status "PAID", refunds array with ONE entry
+GET {{baseUrl}}/api/v1/orders/{{twoLineOrder.response.body.publicId}}
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 26 — The manager refunds the bread line, spoilt — DAMAGED
+# Expected: 201 — totalKobo 400000, displayTotal "₦4000.00", line disposition "DAMAGED".
+# No stock back, no movement row (the shelf keeps 9 milk / 9 bread).
+POST {{baseUrl}}/api/v1/orders/{{twoLineOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listingBread.response.body.publicId}}",
+      "disposition": "DAMAGED"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 27 — Machine receipt after EVERY line is refunded: derived REFUNDED
+# Expected: 200 — status "REFUNDED", statusReason "FULLY_REFUNDED",
+# refunds array with TWO entries (chronological)
+GET {{baseUrl}}/api/v1/orders/{{twoLineOrder.response.body.publicId}}
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+
+### 28 — The SELLING cashier refunds their own sale — refused
+# Expected: 403 — order-access-denied (sales and corrections stay separated)
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listingBread.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 29 — The sales attendant refunds — also refused
+# Expected: 403 — order-access-denied
+POST {{baseUrl}}/api/v1/orders/{{twoLineOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{attendantLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listingBread.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 30 — An order that never existed
+# Expected: 404 — order-not-found
+POST {{baseUrl}}/api/v1/orders/00000000-0000-0000-0000-000000000001/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 31 — An empty line list refunds nothing
+# Expected: 400
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [],
+  "returnMethod": "CASH"
+}
+
+### 32 — A product the order never carried
+# Expected: 400 — "Product ... is not on this order."
+# (bread was never on the one-line cashOrder)
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listingBread.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
+
+### 33 — Setup: the cashier opens a bank-transfer slip via Paystack
+# @name gatewaySlip
+# Expected: 202 — status PENDING_PAYMENT
+# (Without PAYSTACK_SECRET_KEY in .env: 400 payment-provider-not-configured)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "PAYSTACK"
+}
+
+### 34 — Refunding a slip that was never paid — no money moved
+# Expected: 409 — order-not-refundable (this one is PENDING_PAYMENT)
+POST {{baseUrl}}/api/v1/orders/{{gatewaySlip.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ]
+}
+
+### 35 — Gateway refund (MANUAL — needs a human): the reversal
+# MANUAL STEP FIRST: complete the sandbox payment in the
+# paystack.authorizationUrl from case 33, then send
+# payments/verify.http for this slip so it settles PAID.
+# THEN this request:
+# Expected: 201 — providerRefundReference present (the provider's
+# refund reference), displayTotal present, returnMethod ABSENT (the reversal IS the return).
+# No returnMethod on a gateway order is REQUIRED — sending one is a 400.
+POST {{baseUrl}}/api/v1/orders/{{gatewaySlip.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ]
+}
+
+### 36 — Anonymous refund — no token at all
+# Expected: 401
+POST {{baseUrl}}/api/v1/orders/{{cashOrder.response.body.publicId}}/refunds
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ],
+  "returnMethod": "CASH"
+}
