@@ -58,6 +58,21 @@ public class PaystackGateway {
         return new VerifyData(response.data().status(), response.data().amount());
     }
 
+    public ReverseData reverse(String providerReference) {
+
+        ReverseResponse response = restClient
+                .post()
+                .uri("/transfer/{reference}/reverse", providerReference)
+                .retrieve()
+                .body(ReverseResponse.class);
+
+        if (response == null || !response.status()) {
+            throw new IllegalStateException("Paystack did not reverse the transfer");
+        }
+
+        return new ReverseData("REV-" + providerReference);
+    }
+
     private record InitializeBody(String email, long amount, String currency, String reference) {}
 
     private record InitializeResponse(boolean status, InitializeData data) {}
@@ -69,4 +84,8 @@ public class PaystackGateway {
     private record VerifyResponse(boolean status, TransactionData data) {}
 
     private record TransactionData(String status, long amount) {}
+
+    public record ReverseData(String providerRefundReference) {}
+
+    private record ReverseResponse(boolean status, String message) {}
 }

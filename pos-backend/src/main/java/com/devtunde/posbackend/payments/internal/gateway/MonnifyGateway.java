@@ -7,12 +7,15 @@ import java.util.List;
 import com.devtunde.posbackend.payments.api.PaymentProvider;
 import com.devtunde.posbackend.payments.api.exception.PaymentProviderNotConfiguredException;
 import com.monnify.models.MonnifyBaseResponse;
+import com.monnify.models.refund.RefundRequest;
+import com.monnify.models.refund.RefundResponse;
 import com.monnify.models.transaction.BankTransferRequest;
 import com.monnify.models.transaction.BankTransferResponse;
 import com.monnify.models.transaction.PaymentMethod;
 import com.monnify.models.transaction.TransactionRequest;
 import com.monnify.models.transaction.TransactionResponse;
 import com.monnify.models.transaction.TransactionStatusResponse;
+import com.monnify.services.refund.RefundService;
 import com.monnify.services.transaction.TransactionService;
 
 /**
@@ -34,11 +37,14 @@ import com.monnify.services.transaction.TransactionService;
 public class MonnifyGateway {
 
     private final TransactionService transactions;
+    private final RefundService refunds;
     private final String currency;
     private final String contractCode;
 
-    public MonnifyGateway(TransactionService transactions, String currency, String contractCode) {
+    public MonnifyGateway(
+            TransactionService transactions, RefundService refunds, String currency, String contractCode) {
         this.transactions = transactions;
+        this.refunds = refunds;
         this.currency = currency;
         this.contractCode = contractCode;
     }
@@ -51,6 +57,8 @@ public class MonnifyGateway {
             LocalDateTime accountExpiresAt) {}
 
     public record VerifyData(String providerStatus, long amountKobo) {}
+
+    public record ReverseData(String providerRefundReference) {}
 
     /**
      * Two steps, both merchant-side:
@@ -106,6 +114,23 @@ public class MonnifyGateway {
         TransactionStatusResponse status = response.getResponseBody();
 
         return new VerifyData(status.getPaymentStatus(), kobo(status.getAmountPaid()));
+    }
+
+    public ReverseData reverse(String providerReference, long amountKobo) {
+
+        RefundRequest request = new RefundRequest();
+
+        request.setTransactionReference(providerReference);
+        request.setRefundAmount(naira(amountKobo));
+        request.setRefundReason("Order refund");
+
+        MonnifyBaseResponse<RefundResponse> response = refunds.initiateRefund(request);
+
+        requireSuccess(response, "refund initiation");
+
+        RefundResponse body = response.getResponseBody();
+
+        return new ReverseData(body.getRefundReference());
     }
 
     private <T> void requireSuccess(MonnifyBaseResponse<T> response, String what) {
