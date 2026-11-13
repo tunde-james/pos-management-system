@@ -2,6 +2,7 @@ package com.devtunde.posbackend.payments.internal.gateway;
 
 import org.springframework.web.client.RestClient;
 
+import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
@@ -58,6 +59,22 @@ public class PaystackGateway {
         return new VerifyData(response.data().status(), response.data().amount());
     }
 
+    public ReverseData reverse(GatewayReverseRequest request) {
+
+        RefundResponse response = restClient
+                .post()
+                .uri("/refund")
+                .body(new RefundBody(request.customerEmail(), request.amountKobo(), request.providerReference()))
+                .retrieve()
+                .body(RefundResponse.class);
+
+        if (response == null || !response.status() || response.data() == null) {
+            throw new IllegalStateException("Paystack did not accept the refund");
+        }
+
+        return new ReverseData(response.data().reference());
+    }
+
     private record InitializeBody(String email, long amount, String currency, String reference) {}
 
     private record InitializeResponse(boolean status, InitializeData data) {}
@@ -69,4 +86,12 @@ public class PaystackGateway {
     private record VerifyResponse(boolean status, TransactionData data) {}
 
     private record TransactionData(String status, long amount) {}
+
+    public record ReverseData(String providerRefundReference) {}
+
+    private record RefundBody(String email, long amount, String transaction) {}
+
+    private record RefundResponse(boolean status, RefundData data) {}
+
+    private record RefundData(String reference) {}
 }

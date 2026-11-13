@@ -12,6 +12,8 @@ import com.devtunde.posbackend.payments.api.PaymentGateway;
 import com.devtunde.posbackend.payments.api.PaymentProvider;
 import com.devtunde.posbackend.payments.api.dto.GatewayInitiateRequest;
 import com.devtunde.posbackend.payments.api.dto.GatewayInitiateResult;
+import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
+import com.devtunde.posbackend.payments.api.dto.GatewayReverseResult;
 import com.devtunde.posbackend.payments.api.dto.GatewayVerifyRequest;
 import com.devtunde.posbackend.payments.api.dto.GatewayVerifyResult;
 
@@ -20,6 +22,8 @@ import com.devtunde.posbackend.payments.api.dto.GatewayVerifyResult;
 public class FakePaymentGateway implements PaymentGateway {
 
     private final Map<String, Long> initiatedAmounts = new ConcurrentHashMap<>();
+
+    private long reverseCallCount = 0;
 
     private GatewayVerifyStatus nextVerifyStatus = GatewayVerifyStatus.PENDING;
     private Long nextVerifyAmountKobo = null;
@@ -31,6 +35,7 @@ public class FakePaymentGateway implements PaymentGateway {
         this.nextVerifyAmountKobo = null;
         this.verifyCallCount = 0;
         this.accountExpiresAt = LocalDateTime.now().plusDays(1);
+        this.reverseCallCount = 0;
     }
 
     public void setNextVerify(GatewayVerifyStatus status, Long amountKobo) {
@@ -46,6 +51,10 @@ public class FakePaymentGateway implements PaymentGateway {
 
     public long verifyCallCount() {
         return verifyCallCount;
+    }
+
+    public long reverseCallCount() {
+        return reverseCallCount;
     }
 
     @Override
@@ -79,5 +88,13 @@ public class FakePaymentGateway implements PaymentGateway {
                 : initiatedAmounts.getOrDefault(request.providerReference(), 0L);
 
         return new GatewayVerifyResult(GatewayVerifyStatus.SUCCESS, amount, "settled");
+    }
+
+    @Override
+    public GatewayReverseResult reverse(GatewayReverseRequest request) {
+
+        reverseCallCount++;
+
+        return new GatewayReverseResult("REV-" + request.providerReference());
     }
 }

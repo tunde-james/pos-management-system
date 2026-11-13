@@ -5,5 +5,6 @@ public enum MovementType {
     RECEIVED,
     ADJUSTMENT,
     DAMAGE,
-    SALE
+    SALE,
+    REFUND
 }

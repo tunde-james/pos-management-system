@@ -26,7 +26,7 @@ public class StoreListingDelistedEventListener {
         }
 
         inventoryRepository
-                .findByStoreIdAndProductPublicId(event.storePublicId(), event.productPublicId())
+                .lockPair(event.storePublicId(), event.productPublicId())
                 .ifPresent(inventory -> {
                     inventory.archive();
                     inventoryRepository.save(inventory);

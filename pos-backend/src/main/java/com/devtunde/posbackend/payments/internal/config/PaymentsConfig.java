@@ -13,6 +13,7 @@ import com.devtunde.posbackend.payments.internal.gateway.MonnifyGateway;
 import com.devtunde.posbackend.payments.internal.gateway.PaymentGatewayRouter;
 import com.devtunde.posbackend.payments.internal.gateway.PaystackGateway;
 import com.monnify.Monnify;
+import com.monnify.services.refund.RefundService;
 import com.monnify.services.transaction.TransactionService;
 
 @Configuration
@@ -49,6 +50,7 @@ public class PaymentsConfig {
 
         return new MonnifyGateway(
                 new TransactionService(),
+                new RefundService(),
                 properties.currencyCode(),
                 properties.providers().monnify().contractCode());
     }
