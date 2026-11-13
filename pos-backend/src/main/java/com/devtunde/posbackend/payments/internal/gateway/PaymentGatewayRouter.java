@@ -45,9 +45,22 @@ public class PaymentGatewayRouter implements PaymentGateway {
     @Override
     public GatewayReverseResult reverse(GatewayReverseRequest request) {
 
+        String email = request.customerEmail() != null
+                ? request.customerEmail()
+                : WALK_IN_EMAIL_FORMAT.formatted(request.providerReference());
+
+        GatewayReverseRequest withEmail = new GatewayReverseRequest(
+                request.paymentProvider(),
+                request.providerReference(),
+                request.amountKobo(),
+                email,
+                request.refundKey(),
+                request.destinationAccount(),
+                request.destinationBankCode());
+
         return switch (request.paymentProvider()) {
-            case PAYSTACK -> paystackReverse(request);
-            case MONNIFY -> monnifyReverse(request);
+            case PAYSTACK -> paystackReverse(withEmail);
+            case MONNIFY -> monnifyReverse(withEmail);
         };
     }
 
@@ -151,7 +164,7 @@ public class PaymentGatewayRouter implements PaymentGateway {
             return notConfigured(request.paymentProvider());
         }
 
-        PaystackGateway.ReverseData data = paystack.reverse(request.providerReference());
+        PaystackGateway.ReverseData data = paystack.reverse(request);
 
         return new GatewayReverseResult(data.providerRefundReference());
     }
@@ -162,7 +175,7 @@ public class PaymentGatewayRouter implements PaymentGateway {
             return notConfigured(request.paymentProvider());
         }
 
-        MonnifyGateway.ReverseData data = monnify.reverse(request.providerReference(), request.amountKobo());
+        MonnifyGateway.ReverseData data = monnify.reverse(request);
 
         return new GatewayReverseResult(data.providerRefundReference());
     }

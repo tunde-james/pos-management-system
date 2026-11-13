@@ -242,4 +242,45 @@ class RefundGateApiTests extends AbstractRefundTest {
 
         assertThat(result.getResponse().getStatus()).isEqualTo(400);
     }
+
+    @Test
+    @DisplayName("The seat admin of ANOTHER store cannot refund: 403")
+    void seatAdminOfAnotherStoreCannotRefund() throws Exception {
+
+        ManagedStore store = seedStore("Refund Gate Store Thirteen");
+        TillOperator seller = employ(store.storeId(), "CASHIER", "Thirteen Ringr");
+        openSession(seller.token());
+        String category = createCategoryAsAdmin("Refund Gate Category Thirteen");
+        String product = listProductAs(store, category, "Thirteen Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        String orderPublicId = counterPaidOrder(store, seller, line(product, 1));
+
+        // A seat admin - but of a DIFFERENT store. The gate must be
+        // scoped to the order's store, not "admin of any store".
+        ManagedStore otherAdmins = seedStore("Refund Gate Store Fourteen");
+
+        MvcResult result = refund(otherAdmins.managerToken(), orderPublicId, refundBodyFor(product));
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(403);
+    }
+
+    @Test
+    @DisplayName("A null element in the line list: 400, not 500")
+    void nullLineElementIsRejectedWith400() throws Exception {
+
+        ManagedStore store = seedStore("Refund Gate Store Fifteen");
+        TillOperator seller = employ(store.storeId(), "CASHIER", "Null Ringr");
+        TillOperator manager = employManager(store, "Null Manager");
+        openSession(seller.token());
+        String category = createCategoryAsAdmin("Refund Gate Category Fifteen");
+        String product = listProductAs(store, category, "Null Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        String orderPublicId = counterPaidOrder(store, seller, line(product, 1));
+
+        MvcResult result = refund(manager.token(), orderPublicId, "{\"lines\":[null], \"returnMethod\": \"CASH\"}");
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(400);
+    }
 }

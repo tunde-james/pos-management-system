@@ -9,6 +9,7 @@
 #     (V19 must have applied — a pre-refund container 404s the endpoint.)
 #   - Seeded chain admin exists: admin@devtunde.com / Password123!
 #   - For case 35 only: PAYSTACK_SECRET_KEY in .env (sandbox).
+#   - For cases 37-40: MONNIFY_API_KEY/MONNIFY_SECRET_KEY in .env (sandbox).
 #
 # Contract (ticket 0019):
 #   - One operation: refund. NO void. Post-sale service act — no session.
@@ -473,7 +474,7 @@ Content-Type: application/json
 {
   "lines": [
     {
-      "productPublicId": "{{listing.response.body.publicId}",
+      "productPublicId": "{{listing.response.body.publicId}}",
       "quantity": 1
     }
   ],
@@ -527,4 +528,76 @@ Content-Type: application/json
     }
   ],
   "returnMethod": "CASH"
+}
+
+### 37 — Setup: the cashier opens a bank-transfer slip via Monnify
+# @name monnifySlip
+# Expected: 202 — status PENDING_PAYMENT, monnify VA account in the body
+# (Without MONNIFY keys in .env: 400 payment-provider-not-configured)
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{cashierLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}",
+      "quantity": 1
+    }
+  ],
+  "paymentMethod": "TRANSFER",
+  "paymentProvider": "MONNIFY"
+}
+
+### 38 — Refunding a Monnify slip that was never paid — no money moved
+# Expected: 409 — order-not-refundable (PENDING_PAYMENT; the status gate
+# fires BEFORE the destination-account rule, on purpose)
+POST {{baseUrl}}/api/v1/orders/{{monnifySlip.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ]
+}
+
+### 39 — Monnify refund WITHOUT the destination pair: 400 (MANUAL — needs a human)
+# MANUAL STEP FIRST: complete the sandbox payment on the monnifySlip VA
+# account (number + expiry from the case-37 response), then send
+# payments/verify.http for this slip so it settles PAID.
+# THEN send THIS request first:
+# Expected: 400 — "Monnify refunds need the customer's destination account
+# and bank code." A 400 records nothing — the line stays refundable for case 40.
+POST {{baseUrl}}/api/v1/orders/{{monnifySlip.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ]
+}
+
+### 40 — Gateway refund via Monnify (MANUAL — needs a human): the reversal
+# Send AFTER case 39 returned its 400. Monnify refunds the VA payment to the
+# customer's REGULAR account — the destination pair is REQUIRED here.
+# Expected: 201 — providerRefundReference present, displayTotal present,
+# returnMethod ABSENT (the reversal IS the return).
+POST {{baseUrl}}/api/v1/orders/{{monnifySlip.response.body.publicId}}/refunds
+Authorization: Bearer {{managerLogin.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "lines": [
+    {
+      "productPublicId": "{{listing.response.body.publicId}}"
+    }
+  ],
+  "destinationAccount": "0123456789",
+  "destinationBankCode": "032"
 }

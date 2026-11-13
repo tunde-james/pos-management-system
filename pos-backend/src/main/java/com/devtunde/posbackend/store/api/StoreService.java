@@ -21,5 +21,7 @@ public interface StoreService {
 
     boolean isStoreAdmin(UUID userPublicId);
 
+    boolean isStoreAdmin(UUID userPublicId, UUID storePublicId);
+
     void deleteStore(UUID publicId);
 }

@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.devtunde.posbackend.auth.api.UserAccountService;
 import com.devtunde.posbackend.auth.api.UserRole;
 import com.devtunde.posbackend.auth.api.dto.UserViewResponse;
+import com.devtunde.posbackend.customer.api.CustomerService;
 import com.devtunde.posbackend.employee.api.EmployeeJobTitle;
 import com.devtunde.posbackend.employee.api.EmployeeService;
 import com.devtunde.posbackend.employee.api.dto.ActiveEmploymentView;
@@ -40,6 +42,7 @@ import com.devtunde.posbackend.order.internal.persistence.RefundLineRepository;
 import com.devtunde.posbackend.order.internal.persistence.RefundRepository;
 import com.devtunde.posbackend.order.internal.persistence.TillSessionRepository;
 import com.devtunde.posbackend.payments.api.PaymentGateway;
+import com.devtunde.posbackend.payments.api.PaymentProvider;
 import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
 import com.devtunde.posbackend.payments.api.dto.GatewayReverseResult;
 import com.devtunde.posbackend.store.api.StoreService;
@@ -58,6 +61,7 @@ public class RefundServiceImpl implements RefundService {
     private final InventoryService inventoryService;
     private final PaymentGateway paymentGateway;
     private final KoboFormatter koboFormatter;
+    private final CustomerService customerService;
 
     public RefundServiceImpl(
             OrderRepository orderRepository,
@@ -70,7 +74,8 @@ public class RefundServiceImpl implements RefundService {
             UserAccountService userAccountService,
             InventoryService inventoryService,
             PaymentGateway paymentGateway,
-            KoboFormatter koboFormatter) {
+            KoboFormatter koboFormatter,
+            CustomerService customerService) {
 
         this.orderRepository = orderRepository;
         this.orderLineRepository = orderLineRepository;
@@ -83,6 +88,7 @@ public class RefundServiceImpl implements RefundService {
         this.inventoryService = inventoryService;
         this.paymentGateway = paymentGateway;
         this.koboFormatter = koboFormatter;
+        this.customerService = customerService;
     }
 
     @Override
@@ -161,11 +167,26 @@ public class RefundServiceImpl implements RefundService {
             totalKobo += line.getLineTotalKobo();
         }
 
+        if (gatewaySettled
+                && order.getProvider() == PaymentProvider.MONNIFY
+                && (request.destinationAccount() == null
+                        || request.destinationAccount().isBlank()
+                        || request.destinationBankCode() == null
+                        || request.destinationBankCode().isBlank())) {
+            throw new RefundInvalidException("Monnify refunds need the customer's destination account and bank code.");
+        }
+
         String providerRefundReference = null;
 
         if (gatewaySettled) {
-            GatewayReverseResult reversal = paymentGateway.reverse(
-                    new GatewayReverseRequest(order.getProvider(), order.getPaymentReference(), totalKobo));
+            GatewayReverseResult reversal = paymentGateway.reverse(new GatewayReverseRequest(
+                    order.getProvider(),
+                    order.getPaymentReference(),
+                    totalKobo,
+                    customerEmail(order),
+                    refundKey(order, selected),
+                    request.destinationAccount(),
+                    request.destinationBankCode()));
             providerRefundReference = reversal.providerRefundReference();
         }
 
@@ -204,7 +225,7 @@ public class RefundServiceImpl implements RefundService {
             return;
         }
 
-        if (storeService.isStoreAdmin(caller.publicId())) {
+        if (storeService.isStoreAdmin(caller.publicId(), orderSession.getStoreId())) {
             return;
         }
 
@@ -231,6 +252,27 @@ public class RefundServiceImpl implements RefundService {
         } catch (IllegalArgumentException ex) {
             throw new RefundInvalidException("Disposition must be RESTOCKED or DAMAGED.");
         }
+    }
+
+    private String customerEmail(Order order) {
+
+        if (order.getCustomerPublicId() == null) {
+            return null;
+        }
+
+        return customerService
+                .getCustomerByPublicId(order.getCustomerPublicId())
+                .email();
+    }
+
+    private String refundKey(Order order, List<OrderLine> lines) {
+
+        String linePart = lines.stream()
+                .map(line -> line.getProductPublicId().toString().substring(0, 8))
+                .sorted()
+                .collect(Collectors.joining("-"));
+
+        return "RF-" + order.getOrderNumber() + "-" + linePart;
     }
 
     private String parseReturnMethod(String raw) {

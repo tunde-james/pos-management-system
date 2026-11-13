@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import com.devtunde.posbackend.payments.api.PaymentProvider;
+import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
 import com.devtunde.posbackend.payments.api.exception.PaymentProviderNotConfiguredException;
 import com.monnify.models.MonnifyBaseResponse;
 import com.monnify.models.refund.RefundRequest;
@@ -116,18 +117,25 @@ public class MonnifyGateway {
         return new VerifyData(status.getPaymentStatus(), kobo(status.getAmountPaid()));
     }
 
-    public ReverseData reverse(String providerReference, long amountKobo) {
+    public ReverseData reverse(GatewayReverseRequest request) {
 
-        RefundRequest request = new RefundRequest();
+        MonnifyBaseResponse<TransactionStatusResponse> statusResponse =
+                transactions.getStatusByReference(request.providerReference(), null);
 
-        request.setTransactionReference(providerReference);
-        request.setRefundAmount(naira(amountKobo));
-        request.setRefundReason("Order refund");
+        requireSuccess(statusResponse, "transaction query");
+        TransactionStatusResponse status = statusResponse.getResponseBody();
+        RefundRequest refundRequest = new RefundRequest();
 
-        MonnifyBaseResponse<RefundResponse> response = refunds.initiateRefund(request);
+        refundRequest.setTransactionReference(status.getTransactionReference());
+        refundRequest.setRefundReference(request.refundKey());
+        refundRequest.setRefundAmount(naira(request.amountKobo()));
+        refundRequest.setRefundReason("Order refund");
+        refundRequest.setCustomerNote("Order refund");
+        refundRequest.setDestinationAccountNumber(request.destinationAccount());
+        refundRequest.setDestinationAccountBankCode(request.destinationBankCode());
 
+        MonnifyBaseResponse<RefundResponse> response = refunds.initiateRefund(refundRequest);
         requireSuccess(response, "refund initiation");
-
         RefundResponse body = response.getResponseBody();
 
         return new ReverseData(body.getRefundReference());

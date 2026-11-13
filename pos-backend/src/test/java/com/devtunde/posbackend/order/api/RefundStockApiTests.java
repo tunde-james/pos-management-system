@@ -1,7 +1,10 @@
 package com.devtunde.posbackend.order.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MvcResult;
 
 import org.junit.jupiter.api.DisplayName;
@@ -114,11 +117,20 @@ class RefundStockApiTests extends AbstractRefundTest {
                 product);
         assertThat(quantity).isEqualTo(10);
 
-        Boolean archived = jdbcTemplate.queryForObject(
-                "SELECT archived_at IS NOT NULL FROM inventories WHERE store_id = ? AND product_public_id = ?",
-                Boolean.class,
-                store.storeId(),
-                product);
+        Boolean archived = null;
+
+        for (int i = 0; i < 50; i++) {
+            archived = jdbcTemplate.queryForObject(
+                    "SELECT archived_at IS NOT NULL FROM inventories WHERE store_id = ? AND product_public_id = ?",
+                    Boolean.class,
+                    store.storeId(),
+                    product);
+            if (Boolean.TRUE.equals(archived)) {
+                break;
+            }
+            Thread.sleep(100);
+        }
+
         assertThat(archived).isTrue();
     }
 
@@ -173,6 +185,36 @@ class RefundStockApiTests extends AbstractRefundTest {
 
         assertThat(resell.getResponse().getStatus()).isEqualTo(201);
         assertThat(inventoryQuantity(store, product)).isEqualTo(6);
+    }
+
+    @Test
+    @DisplayName("A return that would overflow the tracked quantity: 400, stock untouched")
+    void overflowingReturnIsRejectedWithoutMovingStock() throws Exception {
+
+        ManagedStore store = seedStore("Refund Stock Store Seven");
+        TillOperator seller = employ(store.storeId(), "CASHIER", "Stock Ringr Seven");
+        TillOperator manager = employManager(store, "Stock Manager Seven");
+        openSession(seller.token());
+        String category = createCategoryAsAdmin("Refund Stock Category Seven");
+        String product = listProductAs(store, category, "Overflow Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        String orderPublicId = counterPaidOrder(store, seller, line(product, 4));
+
+        // A pathological stocktake to the cap: returning the 4 sold
+        // units would push the tracked quantity past Integer.MAX_VALUE.
+        mockMvc.perform(put("/api/v1/stores/" + store.storeId() + "/inventory/products/" + product)
+                        .header("Authorization", "Bearer " + store.managerToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\": %d}".formatted(Integer.MAX_VALUE)))
+                .andExpect(status().isOk());
+
+        MvcResult result = refund(manager.token(), orderPublicId, refundBody(refundLine(product, null), "CASH"));
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(400);
+
+        // Unchanged - not a wrapped negative.
+        assertThat(inventoryQuantity(store, product)).isEqualTo(Integer.MAX_VALUE);
     }
 
     private JsonNode findMovement(MvcResult movementsResult, String type) throws Exception {

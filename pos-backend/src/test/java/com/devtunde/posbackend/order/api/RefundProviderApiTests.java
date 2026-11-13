@@ -48,13 +48,38 @@ class RefundProviderApiTests extends AbstractRefundTest {
 
         String orderPublicId = gatewayPaidOrder(store, seller, line(product, 1), "MONNIFY");
 
-        MvcResult result = refund(manager.token(), orderPublicId, refundBody(refundLine(product, null), null));
+        MvcResult result = refund(manager.token(), orderPublicId, """
+                   {
+                       "lines": [%s],
+                       "destinationAccount": "0123456789",
+                       "destinationBankCode": "032"
+                   }
+                   """.formatted(refundLine(product, null)));
 
         assertThat(result.getResponse().getStatus()).isEqualTo(201);
 
         assertThat(jsonOf(result).get("providerRefundReference").asText()).startsWith("REV-FAKE-MONNIFY-");
 
         assertThat(fakeGateway.reverseCallCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("A Monnify refund without the customer's destination account: 400")
+    void monnifyRefundWithoutDestinationAccountIsRejected() throws Exception {
+
+        ManagedStore store = seedStore("Refund Provider Store Eight");
+        TillOperator seller = employ(store.storeId(), "CASHIER", "Provider Ringr Eight");
+        TillOperator manager = employManager(store, "Provider Manager Eight");
+        openSession(seller.token());
+        String category = createCategoryAsAdmin("Refund Provider Category Eight");
+        String product = listProductAs(store, category, "NoDestination Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        String orderPublicId = gatewayPaidOrder(store, seller, line(product, 1), "MONNIFY");
+
+        MvcResult result = refund(manager.token(), orderPublicId, refundBody(refundLine(product, null), null));
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(400);
     }
 
     @Test

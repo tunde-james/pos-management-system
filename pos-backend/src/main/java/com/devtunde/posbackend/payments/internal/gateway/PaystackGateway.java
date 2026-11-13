@@ -2,6 +2,7 @@ package com.devtunde.posbackend.payments.internal.gateway;
 
 import org.springframework.web.client.RestClient;
 
+import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
@@ -58,19 +59,20 @@ public class PaystackGateway {
         return new VerifyData(response.data().status(), response.data().amount());
     }
 
-    public ReverseData reverse(String providerReference) {
+    public ReverseData reverse(GatewayReverseRequest request) {
 
-        ReverseResponse response = restClient
+        RefundResponse response = restClient
                 .post()
-                .uri("/transfer/{reference}/reverse", providerReference)
+                .uri("/refund")
+                .body(new RefundBody(request.customerEmail(), request.amountKobo(), request.providerReference()))
                 .retrieve()
-                .body(ReverseResponse.class);
+                .body(RefundResponse.class);
 
-        if (response == null || !response.status()) {
-            throw new IllegalStateException("Paystack did not reverse the transfer");
+        if (response == null || !response.status() || response.data() == null) {
+            throw new IllegalStateException("Paystack did not accept the refund");
         }
 
-        return new ReverseData("REV-" + providerReference);
+        return new ReverseData(response.data().reference());
     }
 
     private record InitializeBody(String email, long amount, String currency, String reference) {}
@@ -87,5 +89,9 @@ public class PaystackGateway {
 
     public record ReverseData(String providerRefundReference) {}
 
-    private record ReverseResponse(boolean status, String message) {}
+    private record RefundBody(String email, long amount, String transaction) {}
+
+    private record RefundResponse(boolean status, RefundData data) {}
+
+    private record RefundData(String reference) {}
 }

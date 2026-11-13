@@ -16,4 +16,6 @@ public interface StoreRepository extends JpaRepository<Store, Long> {
     Optional<Store> findByBrand(String brand);
 
     Optional<Store> findByContact_Email(String email);
+
+    Optional<Store> findByPublicIdAndStoreAdminId(UUID publicId, UUID storeAdminId);
 }

@@ -8,10 +8,13 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
 public record RefundRequest(
-        @NotEmpty(message = "A refund needs at least one line.") @Valid
-        List<Line> lines,
+        @NotEmpty(message = "A refund needs at least one line.")
+        List<@NotNull(message = "A refund line cannot be null.") @Valid Line> lines,
 
-        String returnMethod) {
+        String returnMethod,
+
+        String destinationAccount,
+        String destinationBankCode) {
 
     public record Line(@NotNull UUID productPublicId, String disposition) {}
 }

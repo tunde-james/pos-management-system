@@ -303,6 +303,11 @@ public class InventoryServiceImpl implements InventoryService {
                     .orElseThrow(InventoryNotFoundException::new);
 
             int before = inventory.getQuantity();
+
+            if (returned.getValue() > Integer.MAX_VALUE - before) {
+                throw new InvalidStockAdjustmentException("The return would overflow the tracked quantity.");
+            }
+
             inventory.setQuantity(before + returned.getValue());
 
             inventoryRepository.save(inventory);
