@@ -1,5 +1,6 @@
 package com.devtunde.posbackend.payments.internal.gateway;
 
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
@@ -61,18 +62,36 @@ public class PaystackGateway {
 
     public ReverseData reverse(GatewayReverseRequest request) {
 
-        RefundResponse response = restClient
-                .post()
-                .uri("/refund")
-                .body(new RefundBody(request.customerEmail(), request.amountKobo(), request.providerReference()))
-                .retrieve()
-                .body(RefundResponse.class);
+        try {
+            RefundResponse response = restClient
+                    .post()
+                    .uri("/refund")
+                    .body(new RefundBody(
+                            request.customerEmail(), request.amountKobo(),
+                            request.providerReference(), request.refundKey()))
+                    .retrieve()
+                    .body(RefundResponse.class);
 
-        if (response == null || !response.status() || response.data() == null) {
-            throw new IllegalStateException("Paystack did not accept the refund");
+            if (response == null || !response.status() || response.data() == null) {
+                throw new IllegalStateException("Paystack did not accept the refund");
+            }
+
+            return new ReverseData(response.data().reference());
+        } catch (HttpClientErrorException.Conflict ex) {
+            // A 409 means this exact refund (same reference) already
+            // exists - fetch it instead of refunding the lines again.
+            RefundResponse existing = restClient
+                    .get()
+                    .uri("/refund?reference=%s", request.refundKey())
+                    .retrieve()
+                    .body(RefundResponse.class);
+
+            if (existing == null || !existing.status() || existing.data() == null) {
+                throw new IllegalStateException("Paystack could not return the existing refund");
+            }
+
+            return new ReverseData(existing.data().reference());
         }
-
-        return new ReverseData(response.data().reference());
     }
 
     private record InitializeBody(String email, long amount, String currency, String reference) {}
@@ -89,7 +108,7 @@ public class PaystackGateway {
 
     public record ReverseData(String providerRefundReference) {}
 
-    private record RefundBody(String email, long amount, String transaction) {}
+    private record RefundBody(String email, long amount, String transaction, String reference) {}
 
     private record RefundResponse(boolean status, RefundData data) {}
 

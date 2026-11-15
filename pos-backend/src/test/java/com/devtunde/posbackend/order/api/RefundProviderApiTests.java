@@ -1,11 +1,15 @@
 package com.devtunde.posbackend.order.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MvcResult;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import com.devtunde.posbackend.payments.api.GatewayVerifyStatus;
 
 class RefundProviderApiTests extends AbstractRefundTest {
 
@@ -192,5 +196,49 @@ class RefundProviderApiTests extends AbstractRefundTest {
         MvcResult result = refund(manager.token(), orderPublicId, refundBody(refundLine(product, null), "CASH"));
 
         assertThat(result.getResponse().getStatus()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName(
+            "A manager refunds a gateway order with a registered customer: 201 (email lookup must not gate on seat admin)")
+    void managerRefundOfRegisteredCustomerOrderSucceeds() throws Exception {
+
+        ManagedStore store = seedStore("Refund Provider Store Nine");
+        TillOperator seller = employ(store.storeId(), "CASHIER", "Provider Ringr Nine");
+        TillOperator manager = employManager(store, "Provider Manager Nine");
+        openSession(seller.token());
+        String category = createCategoryAsAdmin("Refund Provider Category Nine");
+        String product = listProductAs(store, category, "Registered Milk", "15000.00", "12000.00");
+        stockAs(store, product, 10);
+
+        // Enroll the customer (the seat admin may), then sell to them
+        // through the gateway as the ordinary cashier.
+        MvcResult enrolled = mockMvc.perform(post("/api/v1/customers")
+                        .header("Authorization", "Bearer " + store.managerToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fullName\": \"Refund Customer Nine\", \"phone\": \"+2348099990042\"}"))
+                .andReturn();
+
+        assertThat(enrolled.getResponse().getStatus()).isEqualTo(201);
+
+        MvcResult slip = checkout(
+                seller.token(),
+                checkoutBody(
+                        line(product, 1),
+                        "TRANSFER",
+                        ", \"paymentProvider\": \"PAYSTACK\", \"customerPhone\": \"+2348099990042\""));
+
+        assertThat(slip.getResponse().getStatus()).isEqualTo(202);
+        String orderPublicId = jsonOf(slip).get("publicId").asText();
+
+        stubVerify(GatewayVerifyStatus.SUCCESS, null);
+        assertThat(verifyOrder(seller.token(), orderPublicId).getResponse().getStatus())
+                .isEqualTo(200);
+
+        // The refunding user is the store MANAGER - not a seat admin,
+        // not the chain admin. The email lookup must not deny them.
+        MvcResult result = refund(manager.token(), orderPublicId, refundBody(refundLine(product, null), null));
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(201);
     }
 }

@@ -1,5 +1,8 @@
 package com.devtunde.posbackend.order.internal.refund;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -261,7 +264,7 @@ public class RefundServiceImpl implements RefundService {
         }
 
         return customerService
-                .getCustomerByPublicId(order.getCustomerPublicId())
+                .customerContactByPublicId(order.getCustomerPublicId())
                 .email();
     }
 
@@ -272,7 +275,28 @@ public class RefundServiceImpl implements RefundService {
                 .sorted()
                 .collect(Collectors.joining("-"));
 
-        return "RF-" + order.getOrderNumber() + "-" + linePart;
+        String key = "RF-" + order.getOrderNumber() + "-" + linePart;
+
+        if (key.length() <= 64) {
+            return key;
+        }
+
+        return "RF-" + sha256Hex(key).substring(0, 60);
+    }
+
+    private String sha256Hex(String input) {
+
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8));
+
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is missing from the JVM");
+        }
     }
 
     private String parseReturnMethod(String raw) {

@@ -7,6 +7,7 @@ import java.util.List;
 import com.devtunde.posbackend.payments.api.PaymentProvider;
 import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
 import com.devtunde.posbackend.payments.api.exception.PaymentProviderNotConfiguredException;
+import com.monnify.exceptions.MonnifyException;
 import com.monnify.models.MonnifyBaseResponse;
 import com.monnify.models.refund.RefundRequest;
 import com.monnify.models.refund.RefundResponse;
@@ -134,11 +135,39 @@ public class MonnifyGateway {
         refundRequest.setDestinationAccountNumber(request.destinationAccount());
         refundRequest.setDestinationAccountBankCode(request.destinationBankCode());
 
-        MonnifyBaseResponse<RefundResponse> response = refunds.initiateRefund(refundRequest);
-        requireSuccess(response, "refund initiation");
-        RefundResponse body = response.getResponseBody();
+        MonnifyBaseResponse<RefundResponse> response;
 
-        return new ReverseData(body.getRefundReference());
+        try {
+            response = refunds.initiateRefund(refundRequest);
+        } catch (MonnifyException ex) {
+            // The SDK throws on provider errors. R9 means this exact
+            // refund was already accepted (a lost response from a
+            // previous attempt) - fetch it, do not re-initiate.
+
+            if (ex.getMessage() != null && ex.getMessage().contains("R(")) {
+                return recoveredRefund(request);
+            }
+            throw ex;
+        }
+
+        if (!response.isRequestSuccessful() && "R9".equals(response.getResponseCode())) {
+            return recoveredRefund(request);
+        }
+
+        requireSuccess(response, "refund initiation");
+
+        return new ReverseData(response.getResponseBody().getRefundReference());
+    }
+
+    // A refund Monnify already accepted: look it up by the stable
+    // reference and finish the local flow with the existing refund.
+    private ReverseData recoveredRefund(GatewayReverseRequest request) {
+
+        MonnifyBaseResponse<RefundResponse> existing = refunds.getRefundStatus(request.refundKey());
+
+        requireSuccess(existing, "refund status query");
+
+        return new ReverseData(existing.getResponseBody().getRefundReference());
     }
 
     private <T> void requireSuccess(MonnifyBaseResponse<T> response, String what) {
