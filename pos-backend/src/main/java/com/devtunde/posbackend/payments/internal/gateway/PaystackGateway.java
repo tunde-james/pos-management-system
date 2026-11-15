@@ -94,16 +94,23 @@ public class PaystackGateway {
             }
 
             String refundReference = null;
+            String refundStatus = null;
 
             for (RefundData candidate : existing.data()) {
                 if (request.refundKey().equals(candidate.reference())) {
                     refundReference = candidate.reference();
+                    refundStatus = candidate.status();
                     break;
                 }
             }
 
             if (refundReference == null) {
                 throw new IllegalStateException("Paystack returned no refund for the idempotency reference");
+            }
+
+            if ("failed".equalsIgnoreCase(refundStatus)) {
+                throw new IllegalStateException(
+                        "Paystack refund failed (status: " + refundStatus + ") - the local refund is not completed");
             }
 
             return new ReverseData(refundReference);
@@ -128,7 +135,7 @@ public class PaystackGateway {
 
     private record RefundResponse(boolean status, RefundData data) {}
 
-    private record RefundData(String reference) {}
+    private record RefundData(String reference, String status) {}
 
     private record RefundListResponse(boolean status, List<RefundData> data) {}
 }

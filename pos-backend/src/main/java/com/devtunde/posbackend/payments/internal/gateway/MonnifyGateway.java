@@ -170,7 +170,9 @@ public class MonnifyGateway {
         String refundStatus = existing.getResponseBody().getRefundStatus();
 
         if (refundStatus == null
-                || (!refundStatus.equalsIgnoreCase("success") && !refundStatus.equalsIgnoreCase("succeeded"))) {
+                || (!refundStatus.equalsIgnoreCase("success")
+                        && !refundStatus.equalsIgnoreCase("succeeded")
+                        && !refundStatus.equalsIgnoreCase("completed"))) {
             throw new IllegalStateException("Monnify refund is not successful (status: " + refundStatus
                     + ") - the local refund is not completed");
         }
