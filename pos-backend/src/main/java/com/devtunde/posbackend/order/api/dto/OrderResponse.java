@@ -26,9 +26,13 @@ public record OrderResponse(
         LocalDateTime expiresAt,
         PaystackBlock paystack,
         MonnifyBlock monnify,
-        List<OrderLineResponse> lines) {
+        List<OrderLineResponse> lines,
+        List<RefundView> refunds) {
 
     public record PaystackBlock(String authorizationUrl) {}
 
     public record MonnifyBlock(String accountNumber, String bankName, String bankCode) {}
+
+    public record RefundView(
+            long totalKobo, String displayTotal, String returnMethod, String providerRefundReference, LocalDateTime refundedAt) {}
 }

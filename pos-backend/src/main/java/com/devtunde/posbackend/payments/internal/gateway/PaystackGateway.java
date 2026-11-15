@@ -1,7 +1,11 @@
 package com.devtunde.posbackend.payments.internal.gateway;
 
+import java.util.List;
+
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
+import com.devtunde.posbackend.payments.api.dto.GatewayReverseRequest;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
@@ -58,6 +62,61 @@ public class PaystackGateway {
         return new VerifyData(response.data().status(), response.data().amount());
     }
 
+    public ReverseData reverse(GatewayReverseRequest request) {
+
+        try {
+            RefundResponse response = restClient
+                    .post()
+                    .uri("/refund")
+                    .body(new RefundBody(
+                            request.customerEmail(), request.amountKobo(),
+                            request.providerReference(), request.refundKey()))
+                    .retrieve()
+                    .body(RefundResponse.class);
+
+            if (response == null || !response.status() || response.data() == null) {
+                throw new IllegalStateException("Paystack did not accept the refund");
+            }
+
+            return new ReverseData(response.data().reference());
+        } catch (HttpClientErrorException.Conflict ex) {
+            // A 409 means this exact refund (same reference) already
+            // exists - fetch it instead of refunding the lines again.
+            // The GET answer carries data as a list, even for one match.
+            RefundListResponse existing = restClient
+                    .get()
+                    .uri("/refund?reference={reference}", request.refundKey())
+                    .retrieve()
+                    .body(RefundListResponse.class);
+
+            if (existing == null || !existing.status() || existing.data() == null) {
+                throw new IllegalStateException("Paystack could not return the existing refund");
+            }
+
+            String refundReference = null;
+            String refundStatus = null;
+
+            for (RefundData candidate : existing.data()) {
+                if (request.refundKey().equals(candidate.reference())) {
+                    refundReference = candidate.reference();
+                    refundStatus = candidate.status();
+                    break;
+                }
+            }
+
+            if (refundReference == null) {
+                throw new IllegalStateException("Paystack returned no refund for the idempotency reference");
+            }
+
+            if ("failed".equalsIgnoreCase(refundStatus)) {
+                throw new IllegalStateException(
+                        "Paystack refund failed (status: " + refundStatus + ") - the local refund is not completed");
+            }
+
+            return new ReverseData(refundReference);
+        }
+    }
+
     private record InitializeBody(String email, long amount, String currency, String reference) {}
 
     private record InitializeResponse(boolean status, InitializeData data) {}
@@ -69,4 +128,14 @@ public class PaystackGateway {
     private record VerifyResponse(boolean status, TransactionData data) {}
 
     private record TransactionData(String status, long amount) {}
+
+    public record ReverseData(String providerRefundReference) {}
+
+    private record RefundBody(String email, long amount, String transaction, String reference) {}
+
+    private record RefundResponse(boolean status, RefundData data) {}
+
+    private record RefundData(String reference, String status) {}
+
+    private record RefundListResponse(boolean status, List<RefundData> data) {}
 }

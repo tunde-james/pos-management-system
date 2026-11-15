@@ -25,6 +25,7 @@ import com.devtunde.posbackend.inventory.api.dto.LowStockItemResponse;
 import com.devtunde.posbackend.inventory.api.dto.LowStockResponse;
 import com.devtunde.posbackend.inventory.api.dto.MovementResponse;
 import com.devtunde.posbackend.inventory.api.dto.ReceivedRequest;
+import com.devtunde.posbackend.inventory.api.dto.ReturnLine;
 import com.devtunde.posbackend.inventory.api.dto.SaleLine;
 import com.devtunde.posbackend.inventory.api.dto.SaleOutcome;
 import com.devtunde.posbackend.inventory.api.dto.StockShortfall;
@@ -285,6 +286,34 @@ public class InventoryServiceImpl implements InventoryService {
         }
 
         return new SaleOutcome(shortfalls);
+    }
+
+    @Override
+    public void returnStock(UUID storeId, List<ReturnLine> lines) {
+
+        Map<UUID, Integer> returnedByProduct = new TreeMap<>();
+
+        for (ReturnLine line : lines) {
+            returnedByProduct.merge(line.productPublicId(), line.quantity(), Integer::sum);
+        }
+
+        for (Map.Entry<UUID, Integer> returned : returnedByProduct.entrySet()) {
+            Inventory inventory = inventoryRepository
+                    .lockPair(storeId, returned.getKey())
+                    .orElseThrow(InventoryNotFoundException::new);
+
+            int before = inventory.getQuantity();
+
+            if (returned.getValue() > Integer.MAX_VALUE - before) {
+                throw new InvalidStockAdjustmentException("The return would overflow the tracked quantity.");
+            }
+
+            inventory.setQuantity(before + returned.getValue());
+
+            inventoryRepository.save(inventory);
+
+            recordMovement(inventory, MovementType.REFUND, returned.getValue(), before, "Order refund");
+        }
     }
 
     private Inventory requireInventory(UUID storeId, UUID productPublicId) {

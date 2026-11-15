@@ -42,10 +42,13 @@ import com.devtunde.posbackend.order.internal.domain.OrderLine;
 import com.devtunde.posbackend.order.internal.domain.OrderStatus;
 import com.devtunde.posbackend.order.internal.domain.OrderStatusReason;
 import com.devtunde.posbackend.order.internal.domain.PaymentMethod;
+import com.devtunde.posbackend.order.internal.domain.Refund;
 import com.devtunde.posbackend.order.internal.domain.SessionStatus;
 import com.devtunde.posbackend.order.internal.domain.TillSession;
 import com.devtunde.posbackend.order.internal.persistence.OrderLineRepository;
 import com.devtunde.posbackend.order.internal.persistence.OrderRepository;
+import com.devtunde.posbackend.order.internal.persistence.RefundLineRepository;
+import com.devtunde.posbackend.order.internal.persistence.RefundRepository;
 import com.devtunde.posbackend.order.internal.persistence.TillSessionRepository;
 import com.devtunde.posbackend.payments.api.PaymentProvider;
 import com.devtunde.posbackend.product.api.ProductService;
@@ -69,6 +72,8 @@ public class OrderServiceImpl implements OrderService {
     private final PhoneNormalizer phoneNormalizer;
     private final KoboFormatter koboFormatter;
     private final PendingPaymentService pendingPaymentService;
+    private final RefundRepository refundRepository;
+    private final RefundLineRepository refundLineRepository;
 
     public OrderServiceImpl(
             OrderRepository orderRepository,
@@ -83,7 +88,9 @@ public class OrderServiceImpl implements OrderService {
             UserAccountService userAccountService,
             PhoneNormalizer phoneNormalizer,
             KoboFormatter koboFormatter,
-            PendingPaymentService pendingPaymentService) {
+            PendingPaymentService pendingPaymentService,
+            RefundRepository refundRepository,
+            RefundLineRepository refundLineRepository) {
 
         this.orderRepository = orderRepository;
         this.orderLineRepository = orderLineRepository;
@@ -98,6 +105,8 @@ public class OrderServiceImpl implements OrderService {
         this.phoneNormalizer = phoneNormalizer;
         this.koboFormatter = koboFormatter;
         this.pendingPaymentService = pendingPaymentService;
+        this.refundRepository = refundRepository;
+        this.refundLineRepository = refundLineRepository;
     }
 
     @Override
@@ -409,10 +418,18 @@ public class OrderServiceImpl implements OrderService {
 
     private OrderResponse toResponse(Order order, TillSession session, List<OrderLineResponse> lines) {
 
+        List<Refund> refunds = refundRepository.findByOrderIdOrderByRefundedAtAsc(order.getId());
+        long refundedLineCount = refundLineRepository.countByOrderId(order.getId());
+
         String statusName;
         String statusReason;
 
-        if (order.getStatus() == OrderStatus.PENDING_PAYMENT && !order.isAlive()) {
+        if (!lines.isEmpty() && refundedLineCount >= lines.size()) {
+            // REFUNDED is derived, never written — every line has a refund;
+            // the order row itself stays PAID.
+            statusName = "REFUNDED";
+            statusReason = "FULLY_REFUNDED";
+        } else if (order.getStatus() == OrderStatus.PENDING_PAYMENT && !order.isAlive()) {
             statusName = OrderStatus.EXPIRED.name();
             statusReason = OrderStatusReason.TTL_TIMEOUT.name();
         } else {
@@ -421,6 +438,17 @@ public class OrderServiceImpl implements OrderService {
                     ? null
                     : order.getStatusReason().name();
         }
+
+        List<OrderResponse.RefundView> refundViews = refunds.isEmpty()
+                ? null
+                : refunds.stream()
+                        .map(refund -> new OrderResponse.RefundView(
+                                refund.getTotalKobo(),
+                                koboFormatter.format(refund.getTotalKobo()),
+                                refund.getReturnMethod(),
+                                refund.getProviderRefundReference(),
+                                refund.getRefundedAt()))
+                        .toList();
 
         return new OrderResponse(
                 order.getPublicId(),
@@ -441,7 +469,8 @@ public class OrderServiceImpl implements OrderService {
                 order.getExpiresAt(),
                 paystackBlock(order),
                 monnifyBlock(order),
-                lines);
+                lines,
+                refundViews);
     }
 
     private static OrderResponse.PaystackBlock paystackBlock(Order order) {

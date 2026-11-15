@@ -7,7 +7,11 @@ import com.devtunde.posbackend.common.api.ProblemDetailException;
 public class InvalidStockAdjustmentException extends ProblemDetailException {
 
     public InvalidStockAdjustmentException() {
-        super(HttpStatus.BAD_REQUEST, "The adjustment would take stock below zero.");
+        this("The adjustment would take stock below zero.");
+    }
+
+    public InvalidStockAdjustmentException(String detail) {
+        super(HttpStatus.BAD_REQUEST, detail);
     }
 
     @Override
