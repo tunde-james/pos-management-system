@@ -1,5 +1,7 @@
 package com.devtunde.posbackend.payments.internal.gateway;
 
+import java.util.List;
+
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
@@ -80,17 +82,31 @@ public class PaystackGateway {
         } catch (HttpClientErrorException.Conflict ex) {
             // A 409 means this exact refund (same reference) already
             // exists - fetch it instead of refunding the lines again.
-            RefundResponse existing = restClient
+            // The GET answer carries data as a list, even for one match.
+            RefundListResponse existing = restClient
                     .get()
-                    .uri("/refund?reference=%s", request.refundKey())
+                    .uri("/refund?reference={reference}", request.refundKey())
                     .retrieve()
-                    .body(RefundResponse.class);
+                    .body(RefundListResponse.class);
 
             if (existing == null || !existing.status() || existing.data() == null) {
                 throw new IllegalStateException("Paystack could not return the existing refund");
             }
 
-            return new ReverseData(existing.data().reference());
+            String refundReference = null;
+
+            for (RefundData candidate : existing.data()) {
+                if (request.refundKey().equals(candidate.reference())) {
+                    refundReference = candidate.reference();
+                    break;
+                }
+            }
+
+            if (refundReference == null) {
+                throw new IllegalStateException("Paystack returned no refund for the idempotency reference");
+            }
+
+            return new ReverseData(refundReference);
         }
     }
 
@@ -113,4 +129,6 @@ public class PaystackGateway {
     private record RefundResponse(boolean status, RefundData data) {}
 
     private record RefundData(String reference) {}
+
+    private record RefundListResponse(boolean status, List<RefundData> data) {}
 }
