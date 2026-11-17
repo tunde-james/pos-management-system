@@ -323,7 +323,7 @@ public class OrderServiceImpl implements OrderService {
 
         boolean operator = session.getOperatorPublicId().equals(caller.publicId());
         boolean chainAdmin = caller.role() == UserRole.ROLE_ADMIN;
-        boolean seatAdmin = storeService.isStoreAdmin(caller.publicId());
+        boolean seatAdmin = storeService.isStoreAdmin(caller.publicId(), session.getStoreId());
 
         if (!operator && !chainAdmin && !seatAdmin) {
             throw new OrderAccessDeniedException(
