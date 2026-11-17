@@ -122,4 +122,19 @@ class ReceiptApiTests extends AbstractOrderTest {
 
         assertThat(result.getResponse().getStatus()).isEqualTo(404);
     }
+
+    @Test
+    @DisplayName("A seat admin of ANOTHER store cannot read the receipt: 403")
+    void receiptReadByOtherStoresSeatAdminReturns403() throws Exception {
+
+        RungSale sale = ringSale();
+
+        // The seat admin of a DIFFERENT store - the gate must be
+        // scoped to the order's store, not "admin of any store".
+        ManagedStore otherAdmins = seedStore("Receipt Scope Store " + UUID.randomUUID());
+
+        MvcResult result = readReceipt(otherAdmins.managerToken(), sale.orderPublicId());
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(403);
+    }
 }
